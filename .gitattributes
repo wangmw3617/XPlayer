@@ -1,0 +1,29 @@
+# ---- 换行与编码 ----
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# ---- 二进制 ----
+*.jar binary
+*.jks binary
+*.keystore binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.apk binary
+*.so binary
+
+# ---- 语言与 diff ----
+*.kt text diff=kotlin
+*.kts text diff=kotlin
+*.md text
+*.yml text
+*.yaml text
+*.toml text
+*.xml text
+
+# ---- 语言统计：生成物不算进来 ----
+gradlew linguist-vendored
+gradlew.bat linguist-vendored
+gradle/wrapper/* linguist-vendored

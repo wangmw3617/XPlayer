@@ -1,0 +1,51 @@
+name: Setup Android SDK
+description: 准备 JDK 与 Android SDK（platform + build-tools），供编译与打包 job 复用。
+
+inputs:
+  java-version:
+    description: JDK 版本
+    required: false
+    default: '21'
+  platform:
+    description: Android platform 版本
+    required: false
+    default: 'android-36'
+  build-tools:
+    description: Android build-tools 版本
+    required: false
+    default: '36.0.0'
+
+runs:
+  using: composite
+  steps:
+    # AGP 8.10 要求 JDK 17 及以上；用 21 是因为 runner 上它最稳
+    - name: Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: ${{ inputs.java-version }}
+
+    - name: Set up Android SDK
+      shell: bash
+      run: |
+        set -e
+        SDK_ROOT="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+        echo "ANDROID_SDK_ROOT=${SDK_ROOT}" >> "$GITHUB_ENV"
+        echo "ANDROID_HOME=${SDK_ROOT}" >> "$GITHUB_ENV"
+
+        SDKMANAGER="${SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+        if [ ! -x "${SDKMANAGER}" ]; then
+          echo "runner 未预装 cmdline-tools，改为下载"
+          curl -fsSL -o /tmp/cmdline-tools.zip \
+            https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools
+          mkdir -p "${SDK_ROOT}/cmdline-tools"
+          rm -rf "${SDK_ROOT}/cmdline-tools/latest"
+          mv /tmp/cmdline-tools/cmdline-tools "${SDK_ROOT}/cmdline-tools/latest"
+          SDKMANAGER="${SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+        fi
+
+        echo "${SDK_ROOT}/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+        yes | "${SDKMANAGER}" --licenses > /dev/null 2>&1 || true
+        "${SDKMANAGER}" "platforms;${{ inputs.platform }}" "build-tools;${{ inputs.build-tools }}" > /dev/null
+        echo "Android SDK 就绪：${{ inputs.platform }} / build-tools ${{ inputs.build-tools }}"

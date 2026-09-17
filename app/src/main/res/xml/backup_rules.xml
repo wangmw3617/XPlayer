@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <include
+        domain="sharedpref"
+        path="." />
+    <include
+        domain="database"
+        path="." />
+    <exclude
+        domain="file"
+        path="logs" />
+    <exclude
+        domain="file"
+        path="screenshots" />
+</full-backup-content>

@@ -1,0 +1,29 @@
+# ---- IDE / 系统 ----
+*.iml
+/.idea
+.DS_Store
+.externalNativeBuild
+.cxx
+/captures
+
+# ---- Gradle ----
+.gradle
+/build
+/app/build/
+
+# ---- 本地配置（含 SDK 路径，不进版本库）----
+local.properties
+
+# ---- 发布签名：密钥与口令绝不入库 ----
+keystore.properties
+*.jks
+*.keystore
+*.jks.base64
+
+# ---- 构建输出 ----
+*.apk
+*.aab
+
+# ---- AI 助手工作区数据 ----
+/.workbuddy-ai/
+/.ref/

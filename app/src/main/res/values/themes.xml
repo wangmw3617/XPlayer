@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      基础主题用平台自带的 Material NoActionBar：本项目没有引入
+      com.google.android.material，Compose 自己负责全部界面绘制，
+      XML 主题只需要把系统栏设成透明、背景设成与主题同色即可。
+    -->
+    <style name="Theme.XPlayer" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="m">true</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">true</item>
+        <item name="android:windowBackground">@color/splash_background</item>
+    </style>
+
+    <!-- 冷启动期间的启动屏（androidx.core.splashscreen） -->
+    <style name="Theme.XPlayer.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_logo</item>
+        <item name="windowSplashScreenAnimationDuration">400</item>
+        <item name="postSplashScreenTheme">@style/Theme.XPlayer</item>
+    </style>
+
+</resources>

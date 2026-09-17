@@ -1,0 +1,254 @@
+name: Build
+
+# 触发规则：
+#   push 到 main    常规集成验证
+#   push tag v*     额外产出签名 APK 并创建 Release
+#   PR 到 main      合入前验证
+#   手动触发        用于重跑
+#
+# 仅改动文档时跳过整套流水线，避免占用构建配额。路径过滤对 tag 推送不生效
+# （GitHub 官方行为），因此打 tag 一定会触发发布。
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.editorconfig'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.editorconfig'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# 同一分支连续推送时只保留最后一次运行，避免多个 run 争抢 runner
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ANDROID_PLATFORM: 'android-36'
+  ANDROID_BUILD_TOOLS: '36.0.0'
+  # 与 gradle.properties 的 xplayer.abis 保持一致
+  XPLAYER_ABIS: 'arm64-v8a,armeabi-v7a,x86_64'
+
+jobs:
+  # =========================================================== 静态检查闸门 ====
+  #
+  # 两个检查器都是纯词法/结构分析，一两秒完成，不需要 Android SDK。
+  # 放在最前面拦截「XML 不合法」「括号不配对」「顶层声明重复」这三类问题，
+  # 不必等几分钟的完整编译才发现。
+  lint:
+    name: Static checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run static checks
+        run: |
+          set -e
+          python3 scripts/checks/xmlcheck.py
+          python3 scripts/checks/ktscan.py
+
+  # =============================================================== 单元测试 ====
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@v4
+
+      # gradlew 在 Git 里可能没有可执行位，Linux 上会 Permission denied（exit 126）
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - uses: ./.github/actions/setup-android-sdk
+        with:
+          platform: ${{ env.ANDROID_PLATFORM }}
+          build-tools: ${{ env.ANDROID_BUILD_TOOLS }}
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report
+          path: app/build/reports/tests/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # =============================================================== 打包 APK ====
+  #
+  # 刻意不依赖 test：两者都只需要 lint 通过，可以并行，总时长由较慢的那个决定。
+  # 测试失败时整个 run 仍然是红的 —— release 同时依赖 test，不会出现
+  # 「测试挂了但照样发布」。
+  build:
+    name: Build APKs
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - uses: ./.github/actions/setup-android-sdk
+        with:
+          platform: ${{ env.ANDROID_PLATFORM }}
+          build-tools: ${{ env.ANDROID_BUILD_TOOLS }}
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      # tag 形如 v1.0.0 -> 1.0.0，作为 versionName 传给 Gradle。
+      # 非 tag 触发时留空，Gradle 使用 gradle.properties 里的默认值。
+      - name: Resolve version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "name=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 签名材料只以 Secret 形式存在：仓库里不放 .jks，本地构建靠 keystore.properties
+      - name: Restore release keystore
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          set -e
+          [ -n "${KEYSTORE_BASE64}" ] || { echo "::error::未配置 RELEASE_KEYSTORE_BASE64"; exit 1; }
+          echo "${KEYSTORE_BASE64}" | base64 -d > "${GITHUB_WORKSPACE}/release.jks"
+          [ -s "${GITHUB_WORKSPACE}/release.jks" ] || { echo "::error::release.jks 解码后为空"; exit 1; }
+          echo "RELEASE_STORE_FILE=${GITHUB_WORKSPACE}/release.jks" >> "$GITHUB_ENV"
+
+      - name: Build debug APKs
+        env:
+          XPLAYER_VERSION_NAME: ${{ steps.version.outputs.name }}
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Build release APKs
+        env:
+          XPLAYER_VERSION_NAME: ${{ steps.version.outputs.name }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
+
+      # 签名配置失效时 Gradle 会静默产出 *-release-unsigned.apk，装不上，
+      # 且要到用户手里才会被发现，因此这里强制校验。
+      - name: Verify APK signatures
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -e
+          SIGNED="$(find app/build/outputs/apk/release -name '*-release.apk' 2>/dev/null | wc -l)"
+          UNSIGNED="$(find app/build/outputs/apk/release -name '*unsigned*.apk' 2>/dev/null | wc -l)"
+          echo "已签名 APK: ${SIGNED} 个；未签名 APK: ${UNSIGNED} 个"
+          [ "${SIGNED}" -gt 0 ] || { echo "::error::没有产出已签名的 release APK"; exit 1; }
+          [ "${UNSIGNED}" -eq 0 ] || { echo "::error::存在未签名 APK，签名配置未生效"; exit 1; }
+          APKSIGNER="$(find "${ANDROID_SDK_ROOT}/build-tools" -name apksigner | sort -V | tail -1)"
+          "${APKSIGNER}" verify --print-certs "$(find app/build/outputs/apk/release -name '*-release.apk' | head -1)"
+
+      # release 与 debug 包名只差最后一段，平铺到同一目录会把 debug 包一起带上，
+      # 因此按构建类型分目录存放，发布时只取 release/。
+      - name: Collect APKs
+        run: |
+          set -e
+          mkdir -p artifacts/release artifacts/debug
+          find app/build/outputs/apk/release -name '*.apk' -exec cp {} artifacts/release/ \;
+          find app/build/outputs/apk/debug -name '*.apk' -exec cp {} artifacts/debug/ \;
+          ls -lh artifacts/release/ artifacts/debug/
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: xplayer-apks
+          path: artifacts/**/*.apk
+          retention-days: 7
+          if-no-files-found: error
+
+  # =========================================================== 发布（仅 tag）====
+  release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    # 必须同时等 test：build 与 test 并行，只依赖 build 的话
+    # 「测试失败但打包成功」也会被发布出去。
+    needs: [test, build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download APKs
+        uses: actions/download-artifact@v4
+        with:
+          name: xplayer-apks
+          path: apks
+
+      # debug 包虽在 artifact 里（便于排查），但绝不能进 Release 附件
+      - name: Select release APKs only
+        run: |
+          set -e
+          if [ -d apks/release ]; then
+            mv apks/release/*.apk apks/
+            rm -rf apks/release apks/debug
+          fi
+          COUNT="$(find apks -maxdepth 1 -name '*.apk' | wc -l)"
+          echo "待发布的 release APK：${COUNT} 个"
+          [ "${COUNT}" -gt 0 ] || { echo "::error::没有找到可发布的 release APK"; exit 1; }
+          if find apks -maxdepth 1 -name '*-debug.apk' | grep -q .; then
+            echo "::error::发布目录里混入了 debug 包"
+            exit 1
+          fi
+          ls -lh apks/
+
+      # 命名沿用 xplayer-v1.0.0-arm64-v8a-release.apk，便于对照升级
+      - name: Rename with version
+        run: |
+          set -e
+          VERSION="${GITHUB_REF_NAME#v}"
+          cd apks
+          for f in *.apk; do
+            ABI="$(echo "$f" | sed -E 's/^app-(.+)-(debug|release)\.apk$/\1/')"
+            VARIANT="$(echo "$f" | sed -E 's/^app-.+-(debug|release)\.apk$/\1/')"
+            if [ "$ABI" = "$f" ] || [ "$VARIANT" = "$f" ]; then
+              echo "::error::无法从文件名解析 ABI 与构建类型：$f"
+              exit 1
+            fi
+            mv "$f" "xplayer-v${VERSION}-${ABI}-${VARIANT}.apk"
+          done
+          ls -lh
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: apks/*.apk
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

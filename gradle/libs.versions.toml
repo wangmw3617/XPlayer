@@ -1,0 +1,123 @@
+[versions]
+agp = "8.10.1"
+
+# ⚠️ Kotlin 的版本被 Liquid Glass 依赖钉住上限，不是随便选的。
+#
+# Kotlin 元数据不向下兼容：依赖用 Kotlin X 编的，消费者编译器就得 ≥X。
+# 看依赖 POM 里的 kotlin-stdlib 版本即可：
+#
+#   backdrop 1.0.0 / 1.0.1 / 1.0.2   ->  2.2.21   （且不依赖 shapes）
+#   backdrop 1.0.3 / 1.0.4           ->  2.3.0
+#   backdrop 1.0.5                   ->  2.3.0    + shapes 1.0.0
+#   backdrop 1.0.6                   ->  2.3.10   + shapes 1.2.0
+#   backdrop 2.0.0 / 2.0.1           ->  2.3.21 / 2.4.10
+#
+# 取 1.0.2：唯一「Kotlin 2.2.21 + 不带 shapes」的版本，于是 Kotlin 可以停在
+# 2.2.21，Hilt 也就不用动。若升到 1.0.6 则要求 Kotlin ≥2.3.10，而 Kotlin 2.3
+# 的元数据 Hilt 读不了，得升 Hilt；Hilt 2.60 又要求 AGP ≥9 —— 连锁升版。
+kotlin = "2.2.21"
+# KSP 2.2 及以前是 <kotlin>-<ksp> 格式；2.3.0 起才改成与 Kotlin 对齐的纯版本号
+ksp = "2.2.21-2.0.4"
+
+# Hilt 停在 2.56.2：内置的 kotlin-metadata-jvm 最高支持元数据 2.2.0，
+# 正好覆盖 Kotlin 2.2.21。
+hilt = "2.56.2"
+
+coreKtx = "1.16.0"
+activityCompose = "1.10.1"
+lifecycle = "2.9.0"
+composeBom = "2025.05.00"
+navigation = "2.9.0"
+room = "2.7.1"
+datastore = "1.1.7"
+hiltNavigation = "1.2.0"
+# androidx.media 只用于 MediaSessionCompat + MediaStyle 通知（后台播放/锁屏控制）。
+# 1.7.0 是最终稳定版，API 已经冻结，不会再有破坏性变更。
+media = "1.7.0"
+documentfile = "1.0.1"
+splashscreen = "1.0.1"
+serialization = "1.8.1"
+coroutines = "1.10.2"
+
+# ---------------------------------------------------------------------------
+# Liquid Glass（液态玻璃）视觉效果：Kyant0/AndroidLiquidGlass
+#
+# 库名是 backdrop，发布在 Maven Central。它只提供底层绘制原语
+# （Backdrop / drawBackdrop / layerBackdrop），不含任何高层组件 ——
+# 卡片、导航栏、控制层都要自己按原语拼。
+#
+# 停在 1.0.2 的三个理由见上方 Kotlin 注释；1.0.2 与 1.0.6 的公开 API
+# 逐项核对过完全一致（drawBackdrop / blur / lens / vibrancy /
+# rememberLayerBackdrop / layerBackdrop）。
+# ---------------------------------------------------------------------------
+liquidGlass = "1.0.2"
+
+# ---------------------------------------------------------------------------
+# libmpv（播放内核）
+#
+# dev.jdtech.mpv:libmpv 是 jarnedemeulemeester/libmpv-android 发布的 AAR，
+# 内含 arm64-v8a / armeabi-v7a / x86 / x86_64 四套 libmpv + libplayer + FFmpeg .so，
+# 并带一个与 mpv-android 同源的 MPVLib JNI 封装（create/init/destroy/
+# attachSurface/setOptionString/observeProperty + EventObserver/LogObserver）。
+#
+# AAR 的 AndroidManifest 声明 minSdkVersion=26，所以本项目的 minSdk 也是 26。
+# arm64 的 .so 段对齐是 0x4000 / 0x10000，满足 Android 15 的 16KB 页要求。
+#
+# 选择预编译 AAR 而不是自建 mpv-android buildscripts：后者要跑 Nix + 完整
+# FFmpeg/mpv 交叉编译，CI 上动辄一小时以上且极易受上游漂移影响。
+# ---------------------------------------------------------------------------
+libmpv = "0.4.1"
+
+junit = "4.13.2"
+
+[libraries]
+androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
+androidx-core-splashscreen = { module = "androidx.core:core-splashscreen", version.ref = "splashscreen" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
+androidx-documentfile = { module = "androidx.documentfile:documentfile", version.ref = "documentfile" }
+
+androidx-lifecycle-runtime-ktx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "lifecycle" }
+androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
+
+androidx-compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
+androidx-compose-ui = { module = "androidx.compose.ui:ui" }
+androidx-compose-ui-graphics = { module = "androidx.compose.ui:ui-graphics" }
+androidx-compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
+androidx-compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
+androidx-compose-material3 = { module = "androidx.compose.material3:material3" }
+# 图标库已冻结在 1.7.x，BOM 不再统一管理，必须显式给版本
+androidx-compose-material-icons-extended = { module = "androidx.compose.material:material-icons-extended", version = "1.7.8" }
+
+androidx-navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigation" }
+
+androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
+androidx-room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
+androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+
+androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
+
+androidx-media = { module = "androidx.media:media", version.ref = "media" }
+
+hilt-android = { module = "com.google.dagger:hilt-android", version.ref = "hilt" }
+hilt-compiler = { module = "com.google.dagger:hilt-android-compiler", version.ref = "hilt" }
+androidx-hilt-navigation-compose = { module = "androidx.hilt:hilt-navigation-compose", version.ref = "hiltNavigation" }
+
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+
+# Liquid Glass 效果（见上方 versions 注释）
+kyant-backdrop = { module = "io.github.kyant0:backdrop", version.ref = "liquidGlass" }
+
+# 播放内核（见上方 versions 注释）
+libmpv = { module = "dev.jdtech.mpv:libmpv", version.ref = "libmpv" }
+
+junit = { module = "junit:junit", version.ref = "junit" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
