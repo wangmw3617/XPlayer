@@ -124,7 +124,9 @@ fun AppRoot() {
     // 查询要读 ContentResolver，放到 IO 线程，避免分享大文件时卡住首帧。
     val context = LocalContext.current
     LaunchedEffect(Unit) {
-        SharedInput.uris.collect { uri ->
+        SharedInput.pending.collect { uri ->
+            if (uri == null) return@collect
+            SharedInput.consume()
             val title = withContext(Dispatchers.IO) { queryDisplayName(context, uri) }
             PendingPlayback.request(PlaybackSource(uri = uri.toString(), title = title))
             navController.navigate(PlayerRoute) { launchSingleTop = true }

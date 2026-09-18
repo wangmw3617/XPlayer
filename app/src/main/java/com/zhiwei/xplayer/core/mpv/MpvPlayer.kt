@@ -251,7 +251,7 @@ class MpvPlayer @Inject constructor(
     fun play(source: PlaybackSource, startMs: Long = source.startPositionMs) {
         ensureInitialized()
         if (!initialized) return
-        errorLines.clear()
+        synchronized(errorLines) { errorLines.clear() }
         pendingSubtitles = source.extraSubtitles
         _state.update {
             it.copy(
@@ -262,6 +262,10 @@ class MpvPlayer @Inject constructor(
                 durationMs = 0L,
                 tracks = emptyList(),
                 mediaTitle = source.title,
+                // 乐观置 false：loadfile 到 FILE_LOADED 之间 mpv 仍报 idle-active=true，
+                // 前台服务会据此判定「播放已结束」并把刚发出去的 loadfile 停掉。
+                // 播完 A 再播 B 时必现，所以这里必须抢先把 idle 翻过来。
+                idle = false,
             )
         }
         val args = ArrayList<String>(5)

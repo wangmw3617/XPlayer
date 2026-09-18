@@ -1,0 +1,27 @@
+version: 2
+updates:
+  # Gradle 依赖（含 gradle/libs.versions.toml 里钉住的版本）
+  - package-ecosystem: gradle
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # AGP / Kotlin / KSP / Hilt 互相有版本约束（见 libs.versions.toml 顶部注释），
+      # 分散升级几乎必然撞车，合成一个 PR 一起看
+      build-toolchain:
+        patterns:
+          - "com.android.tools.build:*"
+          - "org.jetbrains.kotlin*"
+          - "com.google.devtools.ksp*"
+          - "com.google.dagger:*"
+    ignore:
+      # backdrop 停在 1.0.2：2.x 要 minCompileSdk 37，1.0.3+ 要 Kotlin 2.3，
+      # 会连锁顶起 Hilt 与 AGP。手动升级前先看 libs.versions.toml 的说明
+      - dependency-name: "io.github.kyant0:*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
