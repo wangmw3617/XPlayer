@@ -123,8 +123,6 @@ object Formatters {
     /** 绝对值（给测试用，顺带说明这个文件确实有可测的纯逻辑） */
     fun absOf(value: Int): Int = abs(value)
 
-    val MEDIA_EXTENSIONS: Set<String> = VIDEO_EXTENSIONS + AUDIO_EXTENSIONS
-
     val VIDEO_EXTENSIONS: Set<String> = setOf(
         "mp4", "mkv", "webm", "avi", "mov", "wmv", "flv", "f4v", "m4v", "mpg", "mpeg",
         "ts", "m2ts", "mts", "vob", "3gp", "3g2", "ogv", "rm", "rmvb", "asf", "divx",
@@ -141,4 +139,14 @@ object Formatters {
     val SUBTITLE_EXTENSIONS: Set<String> = setOf(
         "srt", "ass", "ssa", "sub", "vtt", "idx", "sup", "smi", "rt", "ttml", "dfxp", "mpl",
     )
+
+    /**
+     * 视频 + 音频扩展名。
+     *
+     * 用 getter 而不是 val：object 的属性按声明顺序初始化，
+     * 写成 `val X = VIDEO_EXTENSIONS + AUDIO_EXTENSIONS` 且排在两者之前，
+     * 编译期会报 "Variable 'VIDEO_EXTENSIONS' must be initialized"。
+     */
+    val MEDIA_EXTENSIONS: Set<String>
+        get() = VIDEO_EXTENSIONS + AUDIO_EXTENSIONS
 }

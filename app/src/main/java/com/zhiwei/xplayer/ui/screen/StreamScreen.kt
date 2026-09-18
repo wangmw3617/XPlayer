@@ -1,6 +1,5 @@
 package com.zhiwei.xplayer.ui.screen
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -59,6 +58,14 @@ fun StreamScreen(
     val history by viewModel.history.collectAsStateWithLifecycle()
     val streams = remember(history) { history.filter { it.isNetwork } }
 
+    // 显式标注类型再传进去：`if (x) { { ... } } else null` 这种写法里
+    // lambda 的可组合性要靠期望类型推断，写成局部变量最不容易踩坑
+    val supporting: (@Composable () -> Unit)? = if (error) {
+        { Text(context.getString(R.string.stream_invalid)) }
+    } else {
+        null
+    }
+
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(horizontal = 16.dp)) {
             OutlinedTextField(
@@ -72,11 +79,7 @@ fun StreamScreen(
                 isError = error,
                 label = { Text(context.getString(R.string.stream_url)) },
                 placeholder = { Text(context.getString(R.string.stream_url_hint)) },
-                supportingText = if (error) {
-                    { Text(context.getString(R.string.stream_invalid)) }
-                } else {
-                    null
-                },
+                supportingText = supporting,
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Uri,
                     imeAction = ImeAction.Go,

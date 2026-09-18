@@ -63,7 +63,15 @@ fun rememberSubtitlePicker(onPicked: (Uri) -> Unit): ManagedActivityResultLaunch
 /** 媒体类型的 MIME 过滤（给上面两个选择器用） */
 val MEDIA_MIME_TYPES: Array<String> = arrayOf("video/*", "audio/*")
 
-/** 字幕文件的 MIME 过滤。部分 DocumentsProvider 不认这些类型，所以还留了 `*/*` 兜底 */
+/**
+ * 字幕文件的 MIME 过滤。
+ *
+ * 末尾保留通配类型兜底：不少 DocumentsProvider 会把 .srt / .ass 报成
+ * application/octet-stream，只按精确类型过滤会让用户在选字幕时看不到文件。
+ *
+ * 注意：注释里不要再写出通配类型本身 —— 那两个字符里的「星号 + 斜杠」
+ * 会把块注释提前闭合，后面整段代码都会被当成语法错误。
+ */
 val SUBTITLE_MIME_TYPES: Array<String> = arrayOf(
     "application/x-subrip",
     "text/plain",

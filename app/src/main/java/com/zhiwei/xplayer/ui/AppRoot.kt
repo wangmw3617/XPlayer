@@ -54,6 +54,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.kyant.backdrop.Backdrop
+import com.zhiwei.xplayer.core.mpv.PlaybackSource
+import com.zhiwei.xplayer.ui.components.queryDisplayName
 import com.zhiwei.xplayer.ui.nav.FolderRoute
 import com.zhiwei.xplayer.ui.nav.HistoryRoute
 import com.zhiwei.xplayer.ui.nav.HomeRoute
@@ -73,6 +75,8 @@ import com.zhiwei.xplayer.ui.screen.StreamScreen
 import com.zhiwei.xplayer.ui.theme.AppBackground
 import com.zhiwei.xplayer.ui.theme.liquidGlass
 import com.zhiwei.xplayer.ui.theme.rememberAppBackdrop
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private data class TopLevelTab(
     val label: String,
