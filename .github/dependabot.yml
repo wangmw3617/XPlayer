@@ -1,48 +1,53 @@
 version: 2
 updates:
-  # Gradle 依赖（含 gradle/libs.versions.toml 里钉住的版本）
+  # ==========================================================================
+  #  Gradle 依赖
+  #
+  #  刻意**不分组**。分组会把「能升的」和「必须等整条工具链一起升的」绑进同一个
+  #  PR —— kotlinx-serialization 与 coroutines 就被这样绑过一次：它们本身没问题，
+  #  却因为和 Kotlin / KSP 分在一组而整组失败。需要一起升的那几个在下面单独屏蔽，
+  #  其余各自出 PR。
+  # ==========================================================================
   - package-ecosystem: gradle
     directory: "/"
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
-    groups:
-      # AGP / Kotlin / KSP / Hilt 互相有版本约束（见 libs.versions.toml 顶部注释），
-      # 分散升级几乎必然撞车，合成一个 PR 一起看
-      build-toolchain:
-        patterns:
-          - "com.android.tools.build:*"
-          - "org.jetbrains.kotlin*"
-          - "com.google.devtools.ksp*"
-          - "com.google.dagger:*"
     ignore:
-      # ---------------------------------------------------------------------
-      # 下面这几条是「一条链」，必须**同时**升，拆开升必然互相卡住：
+      # ----------------------------------------------------------------------
+      #  这是一条**必须同时升**的链，拆开升必然互相卡住：
       #
-      #   AGP 9.x       -> 要 Gradle 9.6+
-      #   新 KSP        -> 要 AGP >= 8.12
-      #   Hilt 2.60+    -> 要 AGP >= 9.0
-      #   backdrop 2.x  -> 要 minCompileSdk 37（AGP 8.10.1 不支持 37）
-      #   Compose BOM   -> 新版 AAR 同样要求更高的 minCompileSdk
+      #    AGP 9.x       -> 要 Gradle >= 9.6（当前 8.14.3）
+      #    新 KSP        -> 要 AGP >= 8.12
+      #    Hilt 2.60+    -> 报 "only compatible with AGP version 9.0.0 or higher"
+      #    Kotlin 2.3+   -> Hilt 2.56 的 kotlin-metadata 读不了新元数据
+      #    backdrop 2.x  -> 要 minCompileSdk 37（AGP 8.10.1 不支持 37）
+      #    Compose BOM / navigation / hilt-navigation
+      #                  -> 新 AAR 的 minCompileSdk 同样超出当前上限
       #
-      # 逐个开 PR 只会得到一堆必然红的分支，掩盖真正的问题，所以这里屏蔽掉
-      # major / minor，只放行 patch（补丁升级不牵动约束）。整链升级时手动做，
-      # 详细约束见 gradle/libs.versions.toml 顶部注释。
-      # ---------------------------------------------------------------------
+      #  依赖名要**两种写法都列**：Dependabot 对 version catalog 有时按目录别名
+      #  匹配（hilt / navigation），有时按 group:artifact 匹配，只写一种会漏掉。
+      #
+      #  整链升级时手动做，约束细节见 gradle/libs.versions.toml 顶部注释。
+      # ----------------------------------------------------------------------
       - dependency-name: "com.android.application"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "com.android.tools.build:*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
-      - dependency-name: "org.jetbrains.kotlin:*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "org.jetbrains.kotlin.android"
+      - dependency-name: "org.jetbrains.kotlin.plugin.compose"
+      - dependency-name: "org.jetbrains.kotlin.plugin.serialization"
+      - dependency-name: "com.google.devtools.ksp"
       - dependency-name: "com.google.devtools.ksp:*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "com.google.dagger:*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "com.google.dagger.hilt.android"
+      - dependency-name: "hilt"
+      - dependency-name: "androidx.hilt:*"
+      - dependency-name: "hiltNavigation"
       - dependency-name: "io.github.kyant0:*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "androidx.compose:compose-bom"
+      - dependency-name: "androidx.navigation:*"
+      - dependency-name: "navigation"
 
+  # GitHub Actions 的版本升级不受上面那条链影响，独立升级
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
