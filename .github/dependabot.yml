@@ -16,10 +16,32 @@ updates:
           - "com.google.devtools.ksp*"
           - "com.google.dagger:*"
     ignore:
-      # backdrop 停在 1.0.2：2.x 要 minCompileSdk 37，1.0.3+ 要 Kotlin 2.3，
-      # 会连锁顶起 Hilt 与 AGP。手动升级前先看 libs.versions.toml 的说明
+      # ---------------------------------------------------------------------
+      # 下面这几条是「一条链」，必须**同时**升，拆开升必然互相卡住：
+      #
+      #   AGP 9.x       -> 要 Gradle 9.6+
+      #   新 KSP        -> 要 AGP >= 8.12
+      #   Hilt 2.60+    -> 要 AGP >= 9.0
+      #   backdrop 2.x  -> 要 minCompileSdk 37（AGP 8.10.1 不支持 37）
+      #   Compose BOM   -> 新版 AAR 同样要求更高的 minCompileSdk
+      #
+      # 逐个开 PR 只会得到一堆必然红的分支，掩盖真正的问题，所以这里屏蔽掉
+      # major / minor，只放行 patch（补丁升级不牵动约束）。整链升级时手动做，
+      # 详细约束见 gradle/libs.versions.toml 顶部注释。
+      # ---------------------------------------------------------------------
+      - dependency-name: "com.android.application"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "com.android.tools.build:*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "org.jetbrains.kotlin:*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "com.google.devtools.ksp:*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "com.google.dagger:*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "io.github.kyant0:*"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "androidx.compose:compose-bom"
 
   - package-ecosystem: github-actions
     directory: "/"

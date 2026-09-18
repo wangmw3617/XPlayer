@@ -53,7 +53,7 @@ jobs:
     name: Static checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Run static checks
         run: |
@@ -67,7 +67,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lint]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # gradlew 在 Git 里可能没有可执行位，Linux 上会 Permission denied（exit 126）
       - name: Make gradlew executable
@@ -79,7 +79,7 @@ jobs:
           build-tools: ${{ env.ANDROID_BUILD_TOOLS }}
 
       - name: Cache Gradle
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.gradle/caches
@@ -92,7 +92,7 @@ jobs:
 
       - name: Upload test report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: unit-test-report
           path: app/build/reports/tests/
@@ -109,7 +109,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lint]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
@@ -120,7 +120,7 @@ jobs:
           build-tools: ${{ env.ANDROID_BUILD_TOOLS }}
 
       - name: Cache Gradle
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.gradle/caches
@@ -201,7 +201,7 @@ jobs:
           done
 
       - name: Upload APKs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: xplayer-apks
           path: artifacts/**/*.apk
@@ -218,7 +218,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Download APKs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: xplayer-apks
           path: apks
@@ -258,7 +258,7 @@ jobs:
           ls -lh
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: apks/*.apk
           generate_release_notes: true
