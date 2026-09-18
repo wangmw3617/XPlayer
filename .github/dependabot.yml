@@ -49,6 +49,9 @@ updates:
       # core-ktx 1.19 起要求 AGP >= 9.1
       - dependency-name: "androidx.core:*"
       - dependency-name: "coreKtx"
+      # Gradle 9 是 AGP 9 的前置条件，应当一起动；单独升会让 AGP 8.10.1
+      # 跑在它未声明支持的 Gradle 上，而且 PR 只跑 build、不跑 release job
+      - dependency-name: "gradle-wrapper"
 
   # GitHub Actions 的版本升级不受上面那条链影响，独立升级
   - package-ecosystem: github-actions
