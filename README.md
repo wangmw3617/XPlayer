@@ -3,7 +3,7 @@
 基于 **libmpv** 的安卓全能播放器。播放内核与架构参考 [mpv-android](https://github.com/mpv-android/mpv-android)，
 界面用 **Jetpack Compose + Material 3** 重写，底栏采用液态玻璃（Liquid Glass）效果。
 
-- **播放内核**：libmpv（`dev.jdtech.mpv:libmpv`），MediaCodec 硬解，`gpu-next` / `gpu` 双渲染后端
+- **播放内核**：libmpv 1.0.0（`dev.jdtech.mpv:libmpv`），MediaCodec 硬解，`gpu-next` / `gpu` 双渲染后端
 - **界面**：100% Compose，Material You 动态取色，液态玻璃悬浮底栏与播放控制层
 - **架构**：单 Activity + Navigation Compose 类型安全路由；Hilt 依赖注入；Room 存历史与授权目录；DataStore 存设置
 - **最低版本**：Android 8.0（API 26，由 libmpv AAR 的 `minSdkVersion` 决定）
@@ -207,6 +207,11 @@ MPVLib.create(ctx) → 设选项 → MPVLib.init() → 设硬编码选项 → �
 - **不做本地源码构建 libmpv**。mpv-android 的 `buildscripts` 需要 Nix + 完整 FFmpeg/mpv
   交叉编译，CI 上动辄一小时以上且极易受上游漂移影响。改用 `dev.jdtech.mpv:libmpv`
   预编译 AAR（含四套 ABI、`gpu-next`、libplacebo、libass、mbedTLS）。
+- **libmpv 用 1.0.0，且调用方式是实例式的**。0.4.x 的 `MPVLib` 是一堆 Java 静态方法；
+  1.0.0 改成「`MPVLib.create(ctx)` 返回实例 + 实例方法」，常量也搬进了
+  `MPVLib.MpvFormat` / `MPVLib.MpvEvent` / `MPVLib.MpvLogLevel` 三个嵌套对象。
+  `MpvPlayer` 因此持有 `lib` 实例，所有调用点写成 `mpv?.xxx(...)`。
+  1.0.0 的 AAR 还要求 `minCompileSdk=36`（本项目正好是 36）。
 - **不使用 Coil**。本项目只需要「给一个 `content://` 取一张位图」这一种能力，
   而 Coil 3.x 的 `ImageLoader` / Decoder 工厂 API 改动频繁，为一张缩略图承担那套
   版本风险不划算。`Thumbnails` 用系统 API + LRU 直接实现。

@@ -8,24 +8,24 @@ import dev.jdtech.mpv.MPVLib
  * 直接复用 [MPVLib] 的 `@Format` 常量，避免在这里再抄一份数字后与 native 侧脱节。
  */
 object MpvFormat {
-    const val NONE = MPVLib.MPV_FORMAT_NONE
-    const val STRING = MPVLib.MPV_FORMAT_STRING
-    const val FLAG = MPVLib.MPV_FORMAT_FLAG
-    const val INT64 = MPVLib.MPV_FORMAT_INT64
-    const val DOUBLE = MPVLib.MPV_FORMAT_DOUBLE
+    const val NONE = MPVLib.MpvFormat.MPV_FORMAT_NONE
+    const val STRING = MPVLib.MpvFormat.MPV_FORMAT_STRING
+    const val FLAG = MPVLib.MpvFormat.MPV_FORMAT_FLAG
+    const val INT64 = MPVLib.MpvFormat.MPV_FORMAT_INT64
+    const val DOUBLE = MPVLib.MpvFormat.MPV_FORMAT_DOUBLE
 }
 
 /** mpv 事件 id（本应用实际关心的那几个） */
 object MpvEvent {
-    const val SHUTDOWN = MPVLib.MPV_EVENT_SHUTDOWN
-    const val LOG_MESSAGE = MPVLib.MPV_EVENT_LOG_MESSAGE
-    const val START_FILE = MPVLib.MPV_EVENT_START_FILE
-    const val END_FILE = MPVLib.MPV_EVENT_END_FILE
-    const val FILE_LOADED = MPVLib.MPV_EVENT_FILE_LOADED
-    const val VIDEO_RECONFIG = MPVLib.MPV_EVENT_VIDEO_RECONFIG
-    const val AUDIO_RECONFIG = MPVLib.MPV_EVENT_AUDIO_RECONFIG
-    const val SEEK = MPVLib.MPV_EVENT_SEEK
-    const val PLAYBACK_RESTART = MPVLib.MPV_EVENT_PLAYBACK_RESTART
+    const val SHUTDOWN = MPVLib.MpvEvent.MPV_EVENT_SHUTDOWN
+    const val LOG_MESSAGE = MPVLib.MpvEvent.MPV_EVENT_LOG_MESSAGE
+    const val START_FILE = MPVLib.MpvEvent.MPV_EVENT_START_FILE
+    const val END_FILE = MPVLib.MpvEvent.MPV_EVENT_END_FILE
+    const val FILE_LOADED = MPVLib.MpvEvent.MPV_EVENT_FILE_LOADED
+    const val VIDEO_RECONFIG = MPVLib.MpvEvent.MPV_EVENT_VIDEO_RECONFIG
+    const val AUDIO_RECONFIG = MPVLib.MpvEvent.MPV_EVENT_AUDIO_RECONFIG
+    const val SEEK = MPVLib.MpvEvent.MPV_EVENT_SEEK
+    const val PLAYBACK_RESTART = MPVLib.MpvEvent.MPV_EVENT_PLAYBACK_RESTART
 }
 
 /**

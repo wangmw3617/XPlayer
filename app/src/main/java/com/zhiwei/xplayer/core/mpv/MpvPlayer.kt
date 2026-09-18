@@ -34,7 +34,7 @@ import kotlin.math.roundToInt
  * [release] 显式销毁：
  *
  * ```
- *   MPVLib.create(ctx) -> 设选项 -> MPVLib.init() -> 设硬编码选项 -> 注册观察者
+ *   MPVLib.create(ctx) -> 设选项 -> mpv?.init() -> 设硬编码选项 -> 注册观察者
  * ```
  *
  * 顺序不能乱：`setOptionString` 只在 `create` 与 `init` 之间生效（`init` 之后设置
@@ -73,6 +73,18 @@ class MpvPlayer @Inject constructor(
     private val _ended = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
     val ended: SharedFlow<Unit> = _ended.asSharedFlow()
 
+    /**
+     * 当前 mpv 实例。
+     *
+     * libmpv 1.0.0 起 `MPVLib` 不再是「静态方法集合」，而是实例对象：
+     * `MPVLib.create(ctx)` 返回一个实例，其余方法都在实例上调用。
+     * 未初始化时为 null，所以所有调用点都写成 `mpv?.xxx(...)`。
+     */
+    @Volatile
+    private var lib: MPVLib? = null
+
+    private val mpv: MPVLib? get() = lib
+
     @Volatile
     private var initialized = false
 
@@ -97,20 +109,24 @@ class MpvPlayer @Inject constructor(
     fun ensureInitialized() {
         if (initialized) return
         runCatching {
-            MPVLib.create(context)
+            // 1.0.0 起 create() 是**返回实例的静态工厂**，之后所有调用都走这个实例
+            // （支持多实例是这一版的主要变化；本应用只用单实例，但调用方式必须改）
+            lib = MPVLib.create(context)
             applyInitialOptions()
-            MPVLib.init()
+            mpv?.init()
             // init 之后设置的选项用户配置无法覆盖，这里只放「必须这样」的几条
-            MPVLib.setOptionString("force-window", "no")
-            MPVLib.setOptionString("idle", "yes")
-            MPVLib.setOptionString("save-position-on-quit", "no")
-            MPVLib.addObserver(this)
-            MPVLib.addLogObserver(this)
+            mpv?.setOptionString("force-window", "no")
+            mpv?.setOptionString("idle", "yes")
+            mpv?.setOptionString("save-position-on-quit", "no")
+            mpv?.addObserver(this)
+            mpv?.addLogObserver(this)
             observeProperties()
             initialized = true
             Log.i(TAG, "libmpv 已初始化")
         }.onFailure {
             Log.e(TAG, "libmpv 初始化失败", it)
+            lib = null
+            initialized = false
             _state.update { s -> s.copy(error = it.message ?: "libmpv 初始化失败") }
         }
     }
@@ -126,9 +142,10 @@ class MpvPlayer @Inject constructor(
     fun release() {
         if (!initialized) return
         if (surfaceAttached) detachSurface()
-        runCatching { MPVLib.removeObserver(this) }
-        runCatching { MPVLib.removeLogObserver(this) }
-        runCatching { MPVLib.destroy() }
+        runCatching { mpv?.removeObserver(this) }
+        runCatching { mpv?.removeLogObserver(this) }
+        runCatching { mpv?.destroy() }
+        lib = null
         initialized = false
         _state.value = PlayerState()
         Log.i(TAG, "libmpv 已销毁")
@@ -139,51 +156,51 @@ class MpvPlayer @Inject constructor(
 
         // 不读用户配置文件：本应用的设置项才是唯一来源，否则 mpv.conf 会悄悄
         // 覆盖用户在界面上的选择，排查起来非常费劲。
-        MPVLib.setOptionString("config", "no")
-        MPVLib.setOptionString("terminal", "no")
-        MPVLib.setOptionString("input-default-bindings", "no")
-        MPVLib.setOptionString("input-vo-keyboard", "no")
-        MPVLib.setOptionString("osc", "no")
-        MPVLib.setOptionString("osd-level", "0")
+        mpv?.setOptionString("config", "no")
+        mpv?.setOptionString("terminal", "no")
+        mpv?.setOptionString("input-default-bindings", "no")
+        mpv?.setOptionString("input-vo-keyboard", "no")
+        mpv?.setOptionString("osc", "no")
+        mpv?.setOptionString("osd-level", "0")
 
         // 视频输出：Android 上必须显式指定 gpu-context=android 并用 GLES，
         // 否则 mpv 会去找 X11/Wayland 的上下文。
-        MPVLib.setOptionString("vo", voName)
-        MPVLib.setOptionString("gpu-context", "android")
-        MPVLib.setOptionString("opengl-es", "yes")
+        mpv?.setOptionString("vo", voName)
+        mpv?.setOptionString("gpu-context", "android")
+        mpv?.setOptionString("opengl-es", "yes")
 
         // 硬解：mediacodec 优先，mediacodec-copy 兜底（部分格式只能拷贝回内存）
-        MPVLib.setOptionString("hwdec", if (settings.hardwareDecoding) HWDEC else "no")
-        MPVLib.setOptionString("hwdec-codecs", HWDEC_CODECS)
+        mpv?.setOptionString("hwdec", if (settings.hardwareDecoding) HWDEC else "no")
+        mpv?.setOptionString("hwdec-codecs", HWDEC_CODECS)
 
         // 音频：audiotrack 是 Android 原生输出，opensles 在老设备上更稳
-        MPVLib.setOptionString("ao", "audiotrack,opensles")
-        MPVLib.setOptionString("audio-set-media-role", "yes")
+        mpv?.setOptionString("ao", "audiotrack,opensles")
+        mpv?.setOptionString("audio-set-media-role", "yes")
 
         // 字幕：fuzzy 会自动加载同名字幕（含 .zh.srt 之类的语言后缀）
-        MPVLib.setOptionString("sub-auto", if (settings.autoLoadSubtitles) "fuzzy" else "no")
-        MPVLib.setOptionString("audio-file-auto", if (settings.autoLoadSubtitles) "fuzzy" else "no")
-        MPVLib.setOptionString("sub-file-paths", "subs:subtitles:sub:Subs:Subtitles")
+        mpv?.setOptionString("sub-auto", if (settings.autoLoadSubtitles) "fuzzy" else "no")
+        mpv?.setOptionString("audio-file-auto", if (settings.autoLoadSubtitles) "fuzzy" else "no")
+        mpv?.setOptionString("sub-file-paths", "subs:subtitles:sub:Subs:Subtitles")
 
         // 网络
-        MPVLib.setOptionString("tls-verify", "yes")
+        mpv?.setOptionString("tls-verify", "yes")
 
         // 移动端默认的 demuxer 缓存过大（动辄几百 MB），按内存档位收一收
-        MPVLib.setOptionString("demuxer-max-bytes", DEMUXER_CACHE_BYTES)
-        MPVLib.setOptionString("demuxer-max-back-bytes", DEMUXER_CACHE_BYTES)
-        MPVLib.setOptionString("cache", "yes")
+        mpv?.setOptionString("demuxer-max-bytes", DEMUXER_CACHE_BYTES)
+        mpv?.setOptionString("demuxer-max-back-bytes", DEMUXER_CACHE_BYTES)
+        mpv?.setOptionString("cache", "yes")
 
         // 播放到结尾就结束，不要停在最后一帧（结束行为由应用自己决定）
-        MPVLib.setOptionString("keep-open", "no")
+        mpv?.setOptionString("keep-open", "no")
 
-        MPVLib.setOptionString("screenshot-format", "jpg")
-        MPVLib.setOptionString("screenshot-directory", screenshotDir().absolutePath)
+        mpv?.setOptionString("screenshot-format", "jpg")
+        mpv?.setOptionString("screenshot-directory", screenshotDir().absolutePath)
 
         if (settings.defaultAudioLanguage.isNotBlank()) {
-            MPVLib.setOptionString("alang", settings.defaultAudioLanguage)
+            mpv?.setOptionString("alang", settings.defaultAudioLanguage)
         }
         if (settings.defaultSubtitleLanguage.isNotBlank()) {
-            MPVLib.setOptionString("slang", settings.defaultSubtitleLanguage)
+            mpv?.setOptionString("slang", settings.defaultSubtitleLanguage)
         }
     }
 
@@ -197,12 +214,12 @@ class MpvPlayer @Inject constructor(
         if (!initialized) return
         val settings = settingsRepository.current
         runCatching {
-            MPVLib.setPropertyString("hwdec", if (settings.hardwareDecoding) HWDEC else "no")
-            MPVLib.setPropertyString("vo", if (surfaceAttached) voName else "null")
-            MPVLib.setPropertyString("sub-auto", if (settings.autoLoadSubtitles) "fuzzy" else "no")
-            MPVLib.setPropertyString("audio-file-auto", if (settings.autoLoadSubtitles) "fuzzy" else "no")
-            MPVLib.setPropertyString("alang", settings.defaultAudioLanguage)
-            MPVLib.setPropertyString("slang", settings.defaultSubtitleLanguage)
+            mpv?.setPropertyString("hwdec", if (settings.hardwareDecoding) HWDEC else "no")
+            mpv?.setPropertyString("vo", if (surfaceAttached) voName else "null")
+            mpv?.setPropertyString("sub-auto", if (settings.autoLoadSubtitles) "fuzzy" else "no")
+            mpv?.setPropertyString("audio-file-auto", if (settings.autoLoadSubtitles) "fuzzy" else "no")
+            mpv?.setPropertyString("alang", settings.defaultAudioLanguage)
+            mpv?.setPropertyString("slang", settings.defaultSubtitleLanguage)
         }.onFailure { Log.w(TAG, "运行时设置应用失败", it) }
     }
 
@@ -212,12 +229,12 @@ class MpvPlayer @Inject constructor(
         ensureInitialized()
         if (!initialized) return
         runCatching {
-            MPVLib.attachSurface(surface)
+            mpv?.attachSurface(surface)
             // 先挂 surface 再开 vo：mpv 打开 vo 时会去取当前已注册的 Android surface
-            MPVLib.setPropertyString("vo", voName)
+            mpv?.setPropertyString("vo", voName)
             // force-window=yes 让 mpv 在没有视频的纯音频场景也把窗口（surface）建起来，
             // 这样封面图与 OSD 才有地方画
-            MPVLib.setOptionString("force-window", "yes")
+            mpv?.setOptionString("force-window", "yes")
             surfaceAttached = true
             refreshVideoParams()
         }.onFailure { Log.e(TAG, "挂载 surface 失败", it) }
@@ -226,9 +243,9 @@ class MpvPlayer @Inject constructor(
     fun detachSurface() {
         if (!initialized) return
         runCatching {
-            MPVLib.setPropertyString("vo", "null")
-            MPVLib.setOptionString("force-window", "no")
-            MPVLib.detachSurface()
+            mpv?.setPropertyString("vo", "null")
+            mpv?.setOptionString("force-window", "no")
+            mpv?.detachSurface()
         }.onFailure { Log.w(TAG, "卸载 surface 失败", it) }
         surfaceAttached = false
     }
@@ -236,7 +253,7 @@ class MpvPlayer @Inject constructor(
     /** surface 尺寸变化时同步给 mpv，影响 OSD 缩放与 `--video-aspect-override` 的计算 */
     fun setSurfaceSize(width: Int, height: Int) {
         if (!initialized || width <= 0 || height <= 0) return
-        runCatching { MPVLib.setPropertyString("android-surface-size", "${width}x$height") }
+        runCatching { mpv?.setPropertyString("android-surface-size", "${width}x$height") }
     }
 
     // =============================================================== 播放 ====
@@ -277,7 +294,7 @@ class MpvPlayer @Inject constructor(
             args += "-1"
             args += "start=${startMs / 1000.0}"
         }
-        runCatching { MPVLib.command(args.toTypedArray()) }
+        runCatching { mpv?.command(args.toTypedArray()) }
             .onFailure { Log.e(TAG, "loadfile 失败", it) }
     }
 
@@ -286,65 +303,65 @@ class MpvPlayer @Inject constructor(
         ensureInitialized()
         if (!initialized) return
         sources.forEach { source ->
-            runCatching { MPVLib.command(arrayOf("loadfile", source.uri, "append-play")) }
+            runCatching { mpv?.command(arrayOf("loadfile", source.uri, "append-play")) }
         }
     }
 
     fun stop() {
         if (!initialized) return
-        runCatching { MPVLib.command(arrayOf("stop")) }
+        runCatching { mpv?.command(arrayOf("stop")) }
         _state.update { it.copy(idle = true, paused = true, positionMs = 0L) }
     }
 
     fun togglePause() {
         if (!initialized) return
-        runCatching { MPVLib.command(arrayOf("cycle", "pause")) }
+        runCatching { mpv?.command(arrayOf("cycle", "pause")) }
     }
 
     fun setPaused(paused: Boolean) {
         if (!initialized) return
-        runCatching { MPVLib.setPropertyBoolean("pause", paused) }
+        runCatching { mpv?.setPropertyBoolean("pause", paused) }
     }
 
     /** 绝对跳转（毫秒） */
     fun seekTo(positionMs: Long) {
         if (!initialized) return
         val seconds = (positionMs.coerceAtLeast(0L) / 1000.0)
-        runCatching { MPVLib.command(arrayOf("seek", seconds.toString(), "absolute")) }
+        runCatching { mpv?.command(arrayOf("seek", seconds.toString(), "absolute")) }
     }
 
     /** 相对跳转（毫秒，可负） */
     fun seekBy(deltaMs: Long) {
         if (!initialized) return
-        runCatching { MPVLib.command(arrayOf("seek", (deltaMs / 1000.0).toString(), "relative")) }
+        runCatching { mpv?.command(arrayOf("seek", (deltaMs / 1000.0).toString(), "relative")) }
     }
 
     fun next() {
         if (!initialized) return
-        runCatching { MPVLib.command(arrayOf("playlist-next", "weak")) }
+        runCatching { mpv?.command(arrayOf("playlist-next", "weak")) }
     }
 
     fun previous() {
         if (!initialized) return
-        runCatching { MPVLib.command(arrayOf("playlist-prev", "weak")) }
+        runCatching { mpv?.command(arrayOf("playlist-prev", "weak")) }
     }
 
     // ============================================================ 播放参数 ====
 
     fun setSpeed(speed: Float) {
         if (!initialized) return
-        runCatching { MPVLib.setPropertyDouble("speed", speed.toDouble()) }
+        runCatching { mpv?.setPropertyDouble("speed", speed.toDouble()) }
     }
 
     fun setVolume(volume: Int) {
         if (!initialized) return
         val clamped = volume.coerceIn(0, MAX_VOLUME)
-        runCatching { MPVLib.setPropertyDouble("volume", clamped.toDouble()) }
+        runCatching { mpv?.setPropertyDouble("volume", clamped.toDouble()) }
     }
 
     fun toggleMute() {
         if (!initialized) return
-        runCatching { MPVLib.setPropertyBoolean("mute", !state.value.muted) }
+        runCatching { mpv?.setPropertyBoolean("mute", !state.value.muted) }
     }
 
     fun setAudioTrack(id: Int) = setTrackProperty("aid", id)
@@ -357,35 +374,35 @@ class MpvPlayer @Inject constructor(
         if (!initialized) return
         runCatching {
             // mpv 用字符串 "no" 表示「关闭该轨」，不能用 -1
-            if (id < 0) MPVLib.setPropertyString(property, "no")
-            else MPVLib.setPropertyInt(property, id)
+            if (id < 0) mpv?.setPropertyString(property, "no")
+            else mpv?.setPropertyInt(property, id)
         }
     }
 
     fun addSubtitle(uri: String) {
         if (!initialized) return
-        runCatching { MPVLib.command(arrayOf("sub-add", uri, "select")) }
+        runCatching { mpv?.command(arrayOf("sub-add", uri, "select")) }
     }
 
     fun setSubtitleDelay(seconds: Double) {
         if (!initialized) return
-        runCatching { MPVLib.setPropertyDouble("sub-delay", seconds) }
+        runCatching { mpv?.setPropertyDouble("sub-delay", seconds) }
     }
 
     fun setAudioDelay(seconds: Double) {
         if (!initialized) return
-        runCatching { MPVLib.setPropertyDouble("audio-delay", seconds) }
+        runCatching { mpv?.setPropertyDouble("audio-delay", seconds) }
     }
 
     /** [value] 传 `no` 表示恢复「跟随视频」 */
     fun setAspectOverride(value: String) {
         if (!initialized) return
-        runCatching { MPVLib.setPropertyString("video-aspect-override", value) }
+        runCatching { mpv?.setPropertyString("video-aspect-override", value) }
     }
 
     fun setRotation(degrees: Int) {
         if (!initialized) return
-        runCatching { MPVLib.setPropertyInt("video-rotate", ((degrees % 360) + 360) % 360) }
+        runCatching { mpv?.setPropertyInt("video-rotate", ((degrees % 360) + 360) % 360) }
     }
 
     /**
@@ -397,7 +414,7 @@ class MpvPlayer @Inject constructor(
     fun setVideoZoom(zoom: Float) {
         if (!initialized) return
         val value = if (zoom <= 1f) 0.0 else log2(zoom.toDouble())
-        runCatching { MPVLib.setPropertyDouble("video-zoom", value) }
+        runCatching { mpv?.setPropertyDouble("video-zoom", value) }
     }
 
     /** 0 不循环 / 1 列表循环 / 2 单曲循环 */
@@ -406,16 +423,16 @@ class MpvPlayer @Inject constructor(
         runCatching {
             when (mode) {
                 1 -> {
-                    MPVLib.setPropertyString("loop-playlist", "inf")
-                    MPVLib.setPropertyString("loop-file", "no")
+                    mpv?.setPropertyString("loop-playlist", "inf")
+                    mpv?.setPropertyString("loop-file", "no")
                 }
                 2 -> {
-                    MPVLib.setPropertyString("loop-playlist", "no")
-                    MPVLib.setPropertyString("loop-file", "inf")
+                    mpv?.setPropertyString("loop-playlist", "no")
+                    mpv?.setPropertyString("loop-file", "inf")
                 }
                 else -> {
-                    MPVLib.setPropertyString("loop-playlist", "no")
-                    MPVLib.setPropertyString("loop-file", "no")
+                    mpv?.setPropertyString("loop-playlist", "no")
+                    mpv?.setPropertyString("loop-file", "no")
                 }
             }
         }
@@ -434,7 +451,7 @@ class MpvPlayer @Inject constructor(
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val file = File(dir, "XPlayer_$stamp.jpg")
         return runCatching {
-            MPVLib.command(arrayOf("screenshot-to-file", file.absolutePath))
+            mpv?.command(arrayOf("screenshot-to-file", file.absolutePath))
             file.absolutePath
         }.getOrNull()
     }
@@ -515,7 +532,7 @@ class MpvPlayer @Inject constructor(
                 val pending = pendingSubtitles
                 pendingSubtitles = emptyList()
                 pending.forEach { path ->
-                    runCatching { MPVLib.command(arrayOf("sub-add", path, "select")) }
+                    runCatching { mpv?.command(arrayOf("sub-add", path, "select")) }
                 }
             }
 
@@ -546,7 +563,7 @@ class MpvPlayer @Inject constructor(
     override fun logMessage(prefix: String, level: Int, text: String) {
         val line = "[${levelTag(level)}] ${prefix.trim()} ${text.trim()}".trim()
         _log.tryEmit(line)
-        if (level <= MPVLib.MPV_LOG_LEVEL_ERROR) {
+        if (level <= MPVLib.MpvLogLevel.MPV_LOG_LEVEL_ERROR) {
             synchronized(errorLines) {
                 if (errorLines.size >= ERROR_LINE_LIMIT) errorLines.pollFirst()
                 errorLines.addLast(text.trim())
@@ -555,12 +572,12 @@ class MpvPlayer @Inject constructor(
     }
 
     private fun levelTag(level: Int): String = when {
-        level <= MPVLib.MPV_LOG_LEVEL_FATAL -> "FATAL"
-        level <= MPVLib.MPV_LOG_LEVEL_ERROR -> "ERROR"
-        level <= MPVLib.MPV_LOG_LEVEL_WARN -> "WARN"
-        level <= MPVLib.MPV_LOG_LEVEL_INFO -> "INFO"
-        level <= MPVLib.MPV_LOG_LEVEL_V -> "VERBOSE"
-        level <= MPVLib.MPV_LOG_LEVEL_DEBUG -> "DEBUG"
+        level <= MPVLib.MpvLogLevel.MPV_LOG_LEVEL_FATAL -> "FATAL"
+        level <= MPVLib.MpvLogLevel.MPV_LOG_LEVEL_ERROR -> "ERROR"
+        level <= MPVLib.MpvLogLevel.MPV_LOG_LEVEL_WARN -> "WARN"
+        level <= MPVLib.MpvLogLevel.MPV_LOG_LEVEL_INFO -> "INFO"
+        level <= MPVLib.MpvLogLevel.MPV_LOG_LEVEL_V -> "VERBOSE"
+        level <= MPVLib.MpvLogLevel.MPV_LOG_LEVEL_DEBUG -> "DEBUG"
         else -> "TRACE"
     }
 
@@ -580,16 +597,16 @@ class MpvPlayer @Inject constructor(
         )
         val nodes = arrayOf(PROP_TRACK_LIST, PROP_AID, PROP_VID, PROP_SID)
 
-        doubles.forEach { runCatching { MPVLib.observeProperty(it, MpvFormat.DOUBLE) } }
-        flags.forEach { runCatching { MPVLib.observeProperty(it, MpvFormat.FLAG) } }
-        strings.forEach { runCatching { MPVLib.observeProperty(it, MpvFormat.STRING) } }
-        ints.forEach { runCatching { MPVLib.observeProperty(it, MpvFormat.INT64) } }
-        nodes.forEach { runCatching { MPVLib.observeProperty(it, MpvFormat.NONE) } }
+        doubles.forEach { runCatching { mpv?.observeProperty(it, MpvFormat.DOUBLE) } }
+        flags.forEach { runCatching { mpv?.observeProperty(it, MpvFormat.FLAG) } }
+        strings.forEach { runCatching { mpv?.observeProperty(it, MpvFormat.STRING) } }
+        ints.forEach { runCatching { mpv?.observeProperty(it, MpvFormat.INT64) } }
+        nodes.forEach { runCatching { mpv?.observeProperty(it, MpvFormat.NONE) } }
     }
 
     private fun refreshTracks() {
         if (!initialized) return
-        val count = runCatching { MPVLib.getPropertyInt("track-list/count") }.getOrNull() ?: 0
+        val count = runCatching { mpv?.getPropertyInt("track-list/count") }.getOrNull() ?: 0
         if (count <= 0) {
             _state.update { it.copy(tracks = emptyList()) }
             return
@@ -597,22 +614,22 @@ class MpvPlayer @Inject constructor(
         val list = ArrayList<MpvTrack>(count)
         for (index in 0 until count) {
             // 事件是异步的，属性随时可能消失，所以每个字段都要能容忍 null
-            val type = runCatching { MPVLib.getPropertyString("track-list/$index/type") }.getOrNull()
+            val type = runCatching { mpv?.getPropertyString("track-list/$index/type") }.getOrNull()
                 ?: continue
-            val id = runCatching { MPVLib.getPropertyInt("track-list/$index/id") }.getOrNull()
+            val id = runCatching { mpv?.getPropertyInt("track-list/$index/id") }.getOrNull()
                 ?: continue
             list.add(
                 MpvTrack(
                     id = id,
                     type = type,
-                    title = runCatching { MPVLib.getPropertyString("track-list/$index/title") }.getOrNull(),
-                    language = runCatching { MPVLib.getPropertyString("track-list/$index/lang") }.getOrNull(),
-                    codec = runCatching { MPVLib.getPropertyString("track-list/$index/codec") }.getOrNull(),
-                    isDefault = runCatching { MPVLib.getPropertyBoolean("track-list/$index/default") }
+                    title = runCatching { mpv?.getPropertyString("track-list/$index/title") }.getOrNull(),
+                    language = runCatching { mpv?.getPropertyString("track-list/$index/lang") }.getOrNull(),
+                    codec = runCatching { mpv?.getPropertyString("track-list/$index/codec") }.getOrNull(),
+                    isDefault = runCatching { mpv?.getPropertyBoolean("track-list/$index/default") }
                         .getOrNull() == true,
-                    isSelected = runCatching { MPVLib.getPropertyBoolean("track-list/$index/selected") }
+                    isSelected = runCatching { mpv?.getPropertyBoolean("track-list/$index/selected") }
                         .getOrNull() == true,
-                    isExternal = runCatching { MPVLib.getPropertyBoolean("track-list/$index/external") }
+                    isExternal = runCatching { mpv?.getPropertyBoolean("track-list/$index/external") }
                         .getOrNull() == true,
                 ),
             )
@@ -622,9 +639,9 @@ class MpvPlayer @Inject constructor(
 
     private fun refreshVideoParams() {
         if (!initialized) return
-        val width = runCatching { MPVLib.getPropertyInt("video-params/w") }.getOrNull() ?: 0
-        val height = runCatching { MPVLib.getPropertyInt("video-params/h") }.getOrNull() ?: 0
-        val rotate = runCatching { MPVLib.getPropertyInt("video-params/rotate") }.getOrNull() ?: 0
+        val width = runCatching { mpv?.getPropertyInt("video-params/w") }.getOrNull() ?: 0
+        val height = runCatching { mpv?.getPropertyInt("video-params/h") }.getOrNull() ?: 0
+        val rotate = runCatching { mpv?.getPropertyInt("video-params/rotate") }.getOrNull() ?: 0
         _state.update {
             it.copy(
                 videoWidth = width,
@@ -635,13 +652,13 @@ class MpvPlayer @Inject constructor(
     }
 
     private fun readTrackId(property: String): Int {
-        val raw = runCatching { MPVLib.getPropertyString(property) }.getOrNull() ?: return -1
+        val raw = runCatching { mpv?.getPropertyString(property) }.getOrNull() ?: return -1
         return raw.toIntOrNull() ?: -1
     }
 
     private fun readLoopMode(): Int {
-        val file = runCatching { MPVLib.getPropertyString("loop-file") }.getOrNull()
-        val list = runCatching { MPVLib.getPropertyString("loop-playlist") }.getOrNull()
+        val file = runCatching { mpv?.getPropertyString("loop-file") }.getOrNull()
+        val list = runCatching { mpv?.getPropertyString("loop-playlist") }.getOrNull()
         return when {
             file == "inf" -> 2
             list == "inf" -> 1
