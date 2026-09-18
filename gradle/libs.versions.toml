@@ -15,9 +15,9 @@ agp = "8.10.1"
 # 取 1.0.2：唯一「Kotlin 2.2.21 + 不带 shapes」的版本，于是 Kotlin 可以停在
 # 2.2.21，Hilt 也就不用动。若升到 1.0.6 则要求 Kotlin ≥2.3.10，而 Kotlin 2.3
 # 的元数据 Hilt 读不了，得升 Hilt；Hilt 2.60 又要求 AGP ≥9 —— 连锁升版。
-kotlin = "2.2.21"
+kotlin = "2.4.20"
 # KSP 2.2 及以前是 <kotlin>-<ksp> 格式；2.3.0 起才改成与 Kotlin 对齐的纯版本号
-ksp = "2.2.21-2.0.4"
+ksp = "2.3.12"
 
 # Hilt 停在 2.56.2：内置的 kotlin-metadata-jvm 最高支持元数据 2.2.0，
 # 正好覆盖 Kotlin 2.2.21。
@@ -36,8 +36,8 @@ hiltNavigation = "1.2.0"
 media = "1.7.0"
 documentfile = "1.0.1"
 splashscreen = "1.2.0"
-serialization = "1.8.1"
-coroutines = "1.10.2"
+serialization = "1.11.0"
+coroutines = "1.11.0"
 
 # ---------------------------------------------------------------------------
 # Liquid Glass（液态玻璃）视觉效果：Kyant0/AndroidLiquidGlass
