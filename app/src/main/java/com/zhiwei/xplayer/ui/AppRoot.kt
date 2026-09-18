@@ -326,6 +326,3 @@ private fun titleFor(destination: NavDestination?): String = when {
     destination.hasRoute(PlayerRoute::class) -> "正在播放"
     else -> "XPlayer"
 }
-
-/** 未使用但保留：NavigationBarItemDefaults 的默认配色在自定义底栏里可能要用到 */
-internal val glassTabDefaults = NavigationBarItemDefaults

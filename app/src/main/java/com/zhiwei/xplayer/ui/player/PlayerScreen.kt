@@ -2,13 +2,14 @@ package com.zhiwei.xplayer.ui.player
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
-import android.graphics.Color as AndroidColor
 import android.os.Build
 import android.os.SystemClock
 import android.util.Rational
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -116,6 +117,11 @@ fun PlayerScreen(
     var zoom by remember { mutableFloatStateOf(1f) }
     var aspect by remember { mutableStateOf(ASPECT_DEFAULT) }
 
+    // 长按加速：mpv 上报的 speed 会被长按改掉，所以必须自己记住按下去之前的倍速，
+    // 否则松手时会把「加速后的倍速」当成原速存下来，倍速就永久变了。
+    var boosted by remember { mutableStateOf(false) }
+    var speedBeforeBoost by remember { mutableFloatStateOf(1f) }
+
     // ------------------------------------------------------- 待播放请求 ----
     // PendingPlayback 是 StateFlow，collect 会立刻拿到当前值，
     // 所以「进入播放页时播什么」和「播放页已在栈顶时又点了别的文件」是同一条路径。
@@ -213,7 +219,7 @@ fun PlayerScreen(
             Modifier
                 .fillMaxSize()
                 .pointerInput(Unit) {
-                    androidx.compose.foundation.gestures.detectTapGestures(
+                    detectTapGestures(
                         onTap = { controlsVisible = !controlsVisible },
                         onDoubleTap = { viewModel.togglePlayPause() },
                         onLongPress = {
