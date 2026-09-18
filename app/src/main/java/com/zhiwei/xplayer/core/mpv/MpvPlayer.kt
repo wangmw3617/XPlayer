@@ -270,6 +270,7 @@ class MpvPlayer @Inject constructor(
         if (!initialized) return
         synchronized(errorLines) { errorLines.clear() }
         pendingSubtitles = source.extraSubtitles
+        resetPerFileProperties()
         _state.update {
             it.copy(
                 source = source,
@@ -415,6 +416,25 @@ class MpvPlayer @Inject constructor(
         if (!initialized) return
         val value = if (zoom <= 1f) 0.0 else log2(zoom.toDouble())
         runCatching { mpv?.setPropertyDouble("video-zoom", value) }
+    }
+
+    /**
+     * 复位「按文件调整过」的运行时属性。
+     *
+     * mpv 里 `video-zoom` / `video-rotate` / `video-aspect-override` / `sub-delay` /
+     * `audio-delay` 都是**全局运行时属性**，切换文件不会自动回到默认值。
+     * 不显式复位的话，给上一个文件设的缩放、旋转、画面比例、字幕/音频延迟会跟着
+     * 进下一个文件 —— 用户会看到「新片子怎么是歪的 / 放大的 / 字幕对不上」。
+     */
+    private fun resetPerFileProperties() {
+        if (!initialized) return
+        runCatching {
+            mpv?.setPropertyDouble("video-zoom", 0.0)
+            mpv?.setPropertyInt("video-rotate", 0)
+            mpv?.setPropertyString("video-aspect-override", "no")
+            mpv?.setPropertyDouble("sub-delay", 0.0)
+            mpv?.setPropertyDouble("audio-delay", 0.0)
+        }.onFailure { Log.w(TAG, "复位按文件属性失败", it) }
     }
 
     /** 0 不循环 / 1 列表循环 / 2 单曲循环 */

@@ -180,6 +180,14 @@ fun PlayerScreen(
         }
     }
 
+    // 换文件时把「按文件调的画面参数」复位。
+    // mpv 侧的复位在 MpvPlayer.play() 里做，这里同步的是界面自己持有的那份状态，
+    // 否则 UI 显示「1.0x / 跟随视频」而实际画面还留着上一个文件的缩放，两边对不上。
+    LaunchedEffect(state.source?.uri) {
+        zoom = 1f
+        aspect = ASPECT_DEFAULT
+    }
+
     // 手势提示自动消失
     LaunchedEffect(hint) {
         if (hint != null) {
