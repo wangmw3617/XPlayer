@@ -21,7 +21,7 @@ ksp = "2.2.21-2.0.4"
 
 # Hilt 停在 2.56.2：内置的 kotlin-metadata-jvm 最高支持元数据 2.2.0，
 # 正好覆盖 Kotlin 2.2.21。
-hilt = "2.56.2"
+hilt = "2.60.1"
 
 coreKtx = "1.16.0"
 activityCompose = "1.10.1"
