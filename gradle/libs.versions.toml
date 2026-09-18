@@ -37,7 +37,7 @@ media = "1.7.0"
 documentfile = "1.1.0"
 splashscreen = "1.2.0"
 serialization = "1.11.0"
-coroutines = "1.10.2"
+coroutines = "1.11.0"
 
 # ---------------------------------------------------------------------------
 # Liquid Glass（液态玻璃）视觉效果：Kyant0/AndroidLiquidGlass
