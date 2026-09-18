@@ -17,7 +17,8 @@ class FormattersTest {
 
     @Test
     fun `duration uses minutes below one hour`() {
-        assertEquals("0:00", Formatters.duration(0L))
+        // 注意 duration(0) 是「时长未知」，返回占位符而不是 0:00，
+        // 它的断言在 `unknown duration renders placeholder` 里
         assertEquals("0:05", Formatters.duration(5_000L))
         assertEquals("1:30", Formatters.duration(90_000L))
         assertEquals("59:59", Formatters.duration(3_599_000L))
