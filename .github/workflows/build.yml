@@ -188,6 +188,18 @@ jobs:
           find app/build/outputs/apk/debug -name '*.apk' -exec cp {} artifacts/debug/ \;
           ls -lh artifacts/release/ artifacts/debug/
 
+      # 产物级校验。编译通过 ≠ 装上去能用，下面这几类问题编译器一律不管：
+      #   - R8 把 MPVLib 的 native 方法名改了 -> 运行期 UnsatisfiedLinkError；
+      #   - .so 被压缩或数据偏移没按 16KB 对齐 -> Android 15+ 装不上/起不来；
+      #   - ABI 拆包失效、清单里 PiP / 前台服务类型丢了。
+      # 放在上传之前，坏产物不进 artifact。
+      - name: Verify APK contents
+        run: |
+          set -e
+          for apk in artifacts/release/*.apk; do
+            python3 scripts/checks/check_apk.py "$apk"
+          done
+
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
