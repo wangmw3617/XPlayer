@@ -1,5 +1,5 @@
 [versions]
-agp = "8.10.1"
+agp = "9.4.0"
 
 # ⚠️ Kotlin 的版本被 Liquid Glass 依赖钉住上限，不是随便选的。
 #
