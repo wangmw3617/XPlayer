@@ -17,6 +17,8 @@
     <string name="home_open_file_desc">从系统文件选择器挑选媒体</string>
     <string name="home_stream">网络串流</string>
     <string name="home_stream_desc">HTTP / RTSP / RTMP / UDP</string>
+    <string name="home_webdav">WebDAV</string>
+    <string name="home_webdav_desc">浏览并在线播放服务器上的影片</string>
     <string name="home_history">播放历史</string>
     <string name="home_history_desc">最近播放过的媒体</string>
     <string name="home_log">运行日志</string>
@@ -173,4 +175,20 @@
     <string name="notif_action_prev">上一首</string>
     <string name="notif_action_next">下一首</string>
     <string name="notif_action_stop">停止</string>
+
+    <!-- WebDAV -->
+    <string name="webdav_add">添加服务器</string>
+    <string name="webdav_add_desc">连上自己的 WebDAV 服务（坚果云、Nextcloud、群晖等），直接在线播放上面的影片，不用先下载到本机。</string>
+    <string name="webdav_empty">还没有 WebDAV 服务器</string>
+    <string name="webdav_no_media">这个目录里没有内容</string>
+    <string name="webdav_url">服务器地址</string>
+    <string name="webdav_url_hint">https://dav.example.com/dav</string>
+    <string name="webdav_username">用户名</string>
+    <string name="webdav_password">密码</string>
+    <string name="webdav_display_name">备注名（可留空）</string>
+    <string name="webdav_remove">移除服务器</string>
+    <string name="webdav_refresh">刷新</string>
+    <string name="webdav_up">上一级</string>
+    <string name="webdav_invalid">请填写服务器地址</string>
+    <string name="webdav_password_note">密码以明文保存在本机应用设置中，仅用于连接你自己的服务器。</string>
 </resources>

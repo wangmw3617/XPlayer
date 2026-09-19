@@ -50,3 +50,23 @@
     public static int v(...);
     public static int d(...);
 }
+
+# ---- OkHttp / Okio ----
+# OkHttp 5.x 里有些类引用了 JVM 平台专有的实现（如 Conscrypt、BouncyCastle、
+# 以及 Java 9+ 的 Cleaner），Android 上没有，R8 会报 missing class 警告。
+# 这些路径在 Android 上永远不会被走到，dontwarn 即可 —— 不要 -keep，
+# keep 反而会把整棵无用依赖树塞进包里。
+-dontwarn okhttp3.internal.platform.**
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**
+-dontwarn java.lang.ref.**
+
+# ---- XmlPullParser ----
+# WebDAV 的 XML 解析用 Android 自带的 org.xmlpull.v1.XmlPullParser。
+# 个别传递依赖（历史上是 org.ogce:xpp3）会把 org.xmlpull.* 的类也打进来，
+# 于是 R8 报「library class android.content.res.XmlResourceParser implements
+# program class org.xmlpull.v1.XmlPullParser」。这里只 dontwarn，
+# 绝不 -keep org.xmlpull.** —— 一旦 keep 就会把那份重复实现钉进产物，
+# 运行时可能加载到错误的那份，反而更糟。
+-dontwarn org.xmlpull.**

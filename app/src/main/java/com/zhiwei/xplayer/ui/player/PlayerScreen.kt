@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -55,6 +54,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -107,9 +107,37 @@ fun PlayerScreen(
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
-    val state by viewModel.state.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val backdrop = rememberAppBackdrop()
+
+    // ---- 状态切片 ----
+    // 不再在这里 collect 整份 PlayerState。原因：mpv 的 time-pos 每秒推好几次，
+    // 一旦整份快照被读进本作用域，本函数（含视频层与所有玻璃层）就会跟着重画。
+    // 这里按「谁需要谁订阅」拆开，把高频字段留给最里层的小组件去读。
+    val playerState = viewModel.state
+    val sourceUri by remember(playerState) {
+        derivedStateOf { playerState.value.source?.uri }
+    }
+    val backendKey by remember(playerState) {
+        derivedStateOf { playerState.value.hasMedia to playerState.value.error }
+    }
+    val hasMedia = backendKey.first
+    val error by remember(playerState) {
+        derivedStateOf { playerState.value.error }
+    }
+    val buffering by remember(playerState) {
+        derivedStateOf { playerState.value.buffering || (!playerState.value.idle && playerState.value.durationMs == 0L) }
+    }
+    val topBarTitle by remember(playerState) {
+        derivedStateOf { playerState.value.mediaTitle.ifBlank { playerState.value.source?.title.orEmpty() } }
+    }
+    val topBarSubtitle by remember(playerState) {
+        derivedStateOf { buildSubtitle(playerState.value) }
+    }
+    val hwdecActive by remember(playerState) {
+        derivedStateOf { playerState.value.hwdecActive }
+    }
+    val ended = viewModel.player.ended
 
     var controlsVisible by remember { mutableStateOf(true) }
     var sheet by remember { mutableStateOf<PlayerSheet?>(null) }
@@ -121,6 +149,11 @@ fun PlayerScreen(
     // 否则松手时会把「加速后的倍速」当成原速存下来，倍速就永久变了。
     var boosted by remember { mutableStateOf(false) }
     var speedBeforeBoost by remember { mutableFloatStateOf(1f) }
+
+    // 手势层里要用到的低频值，先取出来，避免手势回调闭包每次都重建。
+    val gestureSource = viewModel.player.state
+    val longPressSpeed = settings.longPressSpeed
+    val seekStepSeconds = settings.seekStepSeconds
 
     // ------------------------------------------------------- 待播放请求 ----
     // PendingPlayback 是 StateFlow，collect 会立刻拿到当前值，
@@ -183,7 +216,7 @@ fun PlayerScreen(
     // 换文件时把「按文件调的画面参数」复位。
     // mpv 侧的复位在 MpvPlayer.play() 里做，这里同步的是界面自己持有的那份状态，
     // 否则 UI 显示「1.0x / 跟随视频」而实际画面还留着上一个文件的缩放，两边对不上。
-    LaunchedEffect(state.source?.uri) {
+    LaunchedEffect(sourceUri) {
         zoom = 1f
         aspect = ASPECT_DEFAULT
     }
@@ -198,7 +231,7 @@ fun PlayerScreen(
 
     // 播放结束把控制层亮出来，否则用户面对一张静止画面无从下手
     LaunchedEffect(Unit) {
-        viewModel.player.ended.collect { controlsVisible = true }
+        ended.collect { controlsVisible = true }
     }
 
     val subtitlePicker = rememberSubtitlePicker { uri ->
@@ -223,21 +256,32 @@ fun PlayerScreen(
         )
 
         // ② 手势层。写在控制层之前，控制层里的按钮才会优先拿到点击。
+        //
+        // 这里只用 onPress / onLongPress / onTap，刻意不用 onDoubleTap。
+        // 原因：detectTapGestures 一旦注册了 onDoubleTap，每次单击都必须等
+        // 双击判定超时（约 300ms）才会回调 onTap —— 落在空白处的「轻点切换控制层」
+        // 会有肉眼可见的延迟，而按钮附近的点击更容易被这段等待窗口吃掉，
+        // 表现就是「点播放没反应」。
         Box(
             Modifier
                 .fillMaxSize()
-                .pointerInput(Unit) {
+                .pointerInput(longPressSpeed) {
                     detectTapGestures(
                         onTap = { controlsVisible = !controlsVisible },
-                        onDoubleTap = { viewModel.togglePlayPause() },
                         onLongPress = {
-                            viewModel.player.setSpeed(settings.longPressSpeed)
-                            hint = "${Formatters.speed(settings.longPressSpeed)} 快进中"
+                            viewModel.player.setSpeed(longPressSpeed)
+                            boosted = true
+                            speedBeforeBoost = gestureSource.value.speed
+                            hint = "${Formatters.speed(longPressSpeed)} 快进中"
                         },
                         onPress = {
                             tryAwaitRelease()
-                            // 长按结束恢复原速；普通点击走到这里时倍速本来就是原值，无副作用
-                            viewModel.player.setSpeed(state.speed)
+                            // 只有真的进入过长按加速才需要恢复，
+                            // 普通点击不碰倍速，避免把用户设的倍速冲掉。
+                            if (boosted) {
+                                viewModel.player.setSpeed(speedBeforeBoost)
+                                boosted = false
+                            }
                             hint = null
                         },
                     )
@@ -271,16 +315,16 @@ fun PlayerScreen(
                                 centroid.x < size.width / 2f -> DragMode.BRIGHTNESS
                                 else -> DragMode.VOLUME
                             }
-                            startPosition = state.positionMs
+                            startPosition = gestureSource.value.positionMs
                             brightness = readBrightness(activity)
-                            volume = state.volume.toFloat()
+                            volume = gestureSource.value.volume.toFloat()
                         }
 
                         when (mode) {
                             DragMode.SEEK -> {
-                                val stepMs = settings.seekStepSeconds * 1000f
+                                val stepMs = seekStepSeconds * 1000f
                                 val deltaMs = (total.x / size.width.toFloat() * stepMs).toLong()
-                                val duration = state.durationMs
+                                val duration = gestureSource.value.durationMs
                                 val target = if (duration > 0L) {
                                     (startPosition + deltaMs).coerceIn(0L, duration)
                                 } else {
@@ -316,7 +360,7 @@ fun PlayerScreen(
         )
 
         // ③ 缓冲指示
-        if (state.buffering || (!state.idle && state.durationMs == 0L)) {
+        if (buffering) {
             CircularProgressIndicator(
                 modifier = Modifier
                     .align(Alignment.Center)
@@ -333,13 +377,13 @@ fun PlayerScreen(
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .playerGlass(backdrop, RoundedCornerShape(16.dp), blurRadius = 18.dp, lensAmount = 8.dp)
+                    .playerGlass(backdrop, RoundedCornerShape(16.dp), blurRadius = 18.dp)
                     .padding(horizontal = 18.dp, vertical = 10.dp),
             )
         }
 
         // ⑤ 错误提示
-        state.error?.let { message ->
+        error?.let { message ->
             Text(
                 text = context.getString(R.string.player_error, message),
                 color = Color.White,
@@ -348,7 +392,7 @@ fun PlayerScreen(
                     .align(Alignment.TopCenter)
                     .windowInsetsPadding(WindowInsets.statusBars)
                     .padding(horizontal = 16.dp, vertical = 12.dp)
-                    .playerGlass(backdrop, RoundedCornerShape(14.dp), blurRadius = 16.dp, lensAmount = 6.dp)
+                    .playerGlass(backdrop, RoundedCornerShape(14.dp), blurRadius = 16.dp)
                     .padding(horizontal = 14.dp, vertical = 10.dp),
             )
         }
@@ -356,9 +400,9 @@ fun PlayerScreen(
         // ⑥ 控制层
         if (controlsVisible) {
             PlayerTopBar(
-                title = state.mediaTitle.ifBlank { state.source?.title.orEmpty() },
-                subtitle = buildSubtitle(state),
-                hwdecActive = state.hwdecActive,
+                title = topBarTitle,
+                subtitle = topBarSubtitle,
+                hwdecActive = hwdecActive,
                 backdrop = backdrop,
                 onBack = {
                     if (!settings.backgroundPlayback) viewModel.stopPlayback()
@@ -367,30 +411,39 @@ fun PlayerScreen(
                 modifier = Modifier.align(Alignment.TopCenter),
             )
 
+            // 把高频字段包成 lambda：读取动作发生在 ProgressRow / TransportRow 内部，
+            // 于是「进度走秒」只会让那一行重组，不会连累整块玻璃面板和视频层。
             PlayerControlPanel(
-                state = state,
+                hasMedia = hasMedia,
                 backdrop = backdrop,
-                onTogglePlay = { viewModel.togglePlayPause() },
+                positionMs = { playerState.value.positionMs },
+                durationMs = { playerState.value.durationMs },
+                paused = { playerState.value.paused },
+                speed = { playerState.value.speed },
+                loopMode = { playerState.value.loopMode },
+                onTogglePlay = viewModel::togglePlayPause,
                 onPrevious = { viewModel.player.previous() },
                 onNext = { viewModel.player.next() },
                 onSeekBy = { delta -> viewModel.player.seekBy(delta) },
                 onSeekTo = { position -> viewModel.player.seekTo(position) },
                 onOpenSheet = { sheet = it },
-                onScreenshot = { viewModel.screenshot() },
-                onEnterPip = { enterPip(activity, state) },
+                onScreenshot = viewModel::screenshot,
+                onEnterPip = { enterPip(activity, playerState.value) },
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
     }
 
     // ------------------------------------------------------------ 面板 ----
+    // 面板只在打开时组合，且需要整份快照（轨道列表等），所以这里才读整份 state。
     val activeSheet = sheet
     if (activeSheet != null) {
+        val snapshot = playerState.value
         OptionSheet(
             title = sheetTitle(context, activeSheet),
             options = sheetOptions(
                 kind = activeSheet,
-                state = state,
+                state = snapshot,
                 player = viewModel.player,
                 currentAspect = aspect,
                 onAspectChange = { aspect = it },
@@ -418,7 +471,7 @@ private fun PlayerTopBar(
             .fillMaxWidth()
             .windowInsetsPadding(WindowInsets.statusBars)
             .padding(horizontal = 12.dp, vertical = 8.dp)
-            .playerGlass(backdrop, RoundedCornerShape(20.dp), blurRadius = 20.dp, lensAmount = 10.dp)
+            .playerGlass(backdrop, RoundedCornerShape(20.dp), blurRadius = 20.dp)
             .padding(horizontal = 6.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -463,10 +516,28 @@ private fun PlayerTopBar(
 
 // ============================================================ 控制面板 ====
 
+/**
+ * 播放控制面板。
+ *
+ * 这里刻意「只收窄参数、不收整个 [PlayerState]」：
+ * `time-pos` 每秒会推好几次新快照，每推一次都会让 [PlayerState] 整体失效。
+ * 面板如果直接吃 `PlayerState`，进度、倍速、缓冲这些字段一变，
+ * 整块面板（含 runtime shader 画的玻璃背景）都要重画一遍 —— 这就是卡顿的主因。
+ *
+ * 现在改成分工：
+ * - 面板外壳只关心「有没有视频 / 缓冲中」这类低频字段；
+ * - 进度区、播放按钮、功能栏各自读自己那一小片状态，
+ *   状态变了也只让自己那一行重组。
+ */
 @Composable
 private fun PlayerControlPanel(
-    state: PlayerState,
+    hasMedia: Boolean,
     backdrop: com.kyant.backdrop.Backdrop,
+    positionMs: () -> Long,
+    durationMs: () -> Long,
+    paused: () -> Boolean,
+    speed: () -> Float,
+    loopMode: () -> Int,
     onTogglePlay: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
@@ -478,115 +549,187 @@ private fun PlayerControlPanel(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val duration = state.durationMs.coerceAtLeast(1L)
-
-    // 拖动进度条期间不能让 time-pos 把滑块拽回去，所以本地先接管
-    var scrubbing by remember { mutableStateOf(false) }
-    var scrubValue by remember { mutableFloatStateOf(0f) }
-    val sliderValue = if (scrubbing) {
-        scrubValue
-    } else {
-        (state.positionMs.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
-    }
 
     Column(
         modifier = modifier
             .fillMaxWidth()
             .windowInsetsPadding(WindowInsets.navigationBars)
             .padding(horizontal = 12.dp, vertical = 10.dp)
-            .playerGlass(backdrop, RoundedCornerShape(24.dp), blurRadius = 26.dp, lensAmount = 12.dp)
+            .playerGlass(backdrop, RoundedCornerShape(24.dp), blurRadius = 26.dp)
             .padding(horizontal = 10.dp, vertical = 8.dp),
     ) {
         // ---- 进度 ----
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = Formatters.position(if (scrubbing) (scrubValue * duration).toLong() else state.positionMs),
-                color = Color.White,
-                style = MaterialTheme.typography.labelSmall,
-            )
-            Slider(
-                value = sliderValue,
-                onValueChange = {
-                    scrubbing = true
-                    scrubValue = it
-                },
-                onValueChangeFinished = {
-                    onSeekTo((scrubValue * duration).toLong())
-                    scrubbing = false
-                },
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = 10.dp),
-                colors = SliderDefaults.colors(
-                    thumbColor = Color.White,
-                    activeTrackColor = Color.White,
-                    inactiveTrackColor = Color.White.copy(alpha = 0.3f),
-                ),
-            )
-            Text(
-                text = Formatters.duration(state.durationMs),
-                color = Color.White.copy(alpha = 0.8f),
-                style = MaterialTheme.typography.labelSmall,
-            )
-        }
+        ProgressRow(
+            positionMs = positionMs,
+            durationMs = durationMs,
+            onSeekTo = onSeekTo,
+        )
 
         // ---- 传输控制 ----
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = onPrevious) {
-                Icon(Icons.Filled.SkipPrevious, contentDescription = context.getString(R.string.player_prev), tint = Color.White)
-            }
-            IconButton(onClick = { onSeekBy(-DEFAULT_SEEK_STEP_MS) }) {
-                Icon(Icons.Filled.Replay10, contentDescription = context.getString(R.string.player_seek_back, 10), tint = Color.White)
-            }
-            FilledIconButton(onClick = onTogglePlay) {
-                Icon(
-                    imageVector = if (state.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
-                    contentDescription = context.getString(
-                        if (state.paused) R.string.player_play else R.string.player_pause,
-                    ),
-                )
-            }
-            IconButton(onClick = { onSeekBy(DEFAULT_SEEK_STEP_MS) }) {
-                Icon(Icons.Filled.Forward10, contentDescription = context.getString(R.string.player_seek_forward, 10), tint = Color.White)
-            }
-            IconButton(onClick = onNext) {
-                Icon(Icons.Filled.SkipNext, contentDescription = context.getString(R.string.player_next), tint = Color.White)
-            }
-        }
+        // paused 用 lambda 传入，进度更新不会把这一行也一起重组。
+        TransportRow(
+            paused = paused,
+            enabled = hasMedia,
+            onTogglePlay = onTogglePlay,
+            onPrevious = onPrevious,
+            onNext = onNext,
+            onSeekBy = onSeekBy,
+        )
 
         // ---- 功能图标 ----
-        Row(
+        FeatureRow(
+            speed = speed,
+            loopMode = loopMode,
+            context = context,
+            onOpenSheet = onOpenSheet,
+            onScreenshot = onScreenshot,
+            onEnterPip = onEnterPip,
+        )
+    }
+}
+
+/** 进度条。只有 `position` 变化会重组这一行。 */
+@Composable
+private fun ProgressRow(
+    positionMs: () -> Long,
+    durationMs: () -> Long,
+    onSeekTo: (Long) -> Unit,
+) {
+    // 拖动期间不能让 time-pos 把滑块拽回去，所以本地先接管
+    var scrubbing by remember { mutableStateOf(false) }
+    var scrubValue by remember { mutableFloatStateOf(0f) }
+
+    val duration = durationMs().coerceAtLeast(1L)
+    val shownPosition = if (scrubbing) (scrubValue * duration).toLong() else positionMs()
+    val sliderValue = if (scrubbing) {
+        scrubValue
+    } else {
+        (positionMs().toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+    }
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = Formatters.position(shownPosition),
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+        )
+        Slider(
+            value = sliderValue,
+            onValueChange = {
+                scrubbing = true
+                scrubValue = it
+            },
+            onValueChangeFinished = {
+                onSeekTo((scrubValue * duration).toLong())
+                scrubbing = false
+            },
             modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            ControlIcon(Icons.Outlined.Speed, Formatters.speed(state.speed)) {
-                onOpenSheet(PlayerSheet.SPEED)
-            }
-            ControlIcon(Icons.Outlined.MusicNote, context.getString(R.string.player_audio_track)) {
-                onOpenSheet(PlayerSheet.AUDIO_TRACK)
-            }
-            ControlIcon(Icons.Outlined.Subtitles, context.getString(R.string.player_sub_track)) {
-                onOpenSheet(PlayerSheet.SUBTITLE_TRACK)
-            }
-            ControlIcon(Icons.Outlined.AspectRatio, context.getString(R.string.player_aspect)) {
-                onOpenSheet(PlayerSheet.ASPECT)
-            }
-            ControlIcon(Icons.Outlined.Loop, loopLabelRes(state.loopMode).let { context.getString(it) }) {
-                onOpenSheet(PlayerSheet.LOOP)
-            }
-            ControlIcon(Icons.Outlined.Timer, context.getString(R.string.player_sub_delay)) {
-                onOpenSheet(PlayerSheet.SUBTITLE_DELAY)
-            }
-            ControlIcon(Icons.Outlined.PhotoCamera, context.getString(R.string.player_screenshot), onScreenshot)
-            ControlIcon(Icons.Outlined.PictureInPictureAlt, context.getString(R.string.player_pip), onEnterPip)
+                .weight(1f)
+                .padding(horizontal = 10.dp),
+            colors = SliderDefaults.colors(
+                thumbColor = Color.White,
+                activeTrackColor = Color.White,
+                inactiveTrackColor = Color.White.copy(alpha = 0.3f),
+            ),
+        )
+        Text(
+            text = Formatters.duration(durationMs()),
+            color = Color.White.copy(alpha = 0.8f),
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
+/** 传输控制行。进度走秒不会碰到这里。 */
+@Composable
+private fun TransportRow(
+    paused: () -> Boolean,
+    enabled: Boolean,
+    onTogglePlay: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onSeekBy: (Long) -> Unit,
+) {
+    val context = LocalContext.current
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onPrevious, enabled = enabled) {
+            Icon(Icons.Filled.SkipPrevious, contentDescription = context.getString(R.string.player_prev), tint = Color.White)
         }
+        IconButton(onClick = { onSeekBy(-DEFAULT_SEEK_STEP_MS) }, enabled = enabled) {
+            Icon(Icons.Filled.Replay10, contentDescription = context.getString(R.string.player_seek_back, 10), tint = Color.White)
+        }
+        // 播放/暂停是最高频操作，单独包一层：只有 paused 真正翻转时才重组图标。
+        PlayPauseButton(paused = paused, onTogglePlay = onTogglePlay)
+        IconButton(onClick = { onSeekBy(DEFAULT_SEEK_STEP_MS) }, enabled = enabled) {
+            Icon(Icons.Filled.Forward10, contentDescription = context.getString(R.string.player_seek_forward, 10), tint = Color.White)
+        }
+        IconButton(onClick = onNext, enabled = enabled) {
+            Icon(Icons.Filled.SkipNext, contentDescription = context.getString(R.string.player_next), tint = Color.White)
+        }
+    }
+}
+
+/**
+ * 播放/暂停按钮。
+ *
+ * 只依赖 `paused` 这一位状态：进度更新不会重建这个按钮，
+ * 点击也就不再因为上层重组而「看起来没反应」。
+ */
+@Composable
+private fun PlayPauseButton(paused: () -> Boolean, onTogglePlay: () -> Unit) {
+    val context = LocalContext.current
+    val isPaused = paused()
+    FilledIconButton(onClick = onTogglePlay) {
+        Icon(
+            imageVector = if (isPaused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+            contentDescription = context.getString(
+                if (isPaused) R.string.player_play else R.string.player_pause,
+            ),
+        )
+    }
+}
+
+/** 倍速 / 音轨 / 字幕 / 比例 / 循环 / 截图 / 画中画 */
+@Composable
+private fun FeatureRow(
+    speed: () -> Float,
+    loopMode: () -> Int,
+    context: android.content.Context,
+    onOpenSheet: (PlayerSheet) -> Unit,
+    onScreenshot: () -> Unit,
+    onEnterPip: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ControlIcon(Icons.Outlined.Speed, Formatters.speed(speed())) {
+            onOpenSheet(PlayerSheet.SPEED)
+        }
+        ControlIcon(Icons.Outlined.MusicNote, context.getString(R.string.player_audio_track)) {
+            onOpenSheet(PlayerSheet.AUDIO_TRACK)
+        }
+        ControlIcon(Icons.Outlined.Subtitles, context.getString(R.string.player_sub_track)) {
+            onOpenSheet(PlayerSheet.SUBTITLE_TRACK)
+        }
+        ControlIcon(Icons.Outlined.AspectRatio, context.getString(R.string.player_aspect)) {
+            onOpenSheet(PlayerSheet.ASPECT)
+        }
+        ControlIcon(Icons.Outlined.Loop, context.getString(loopLabelRes(loopMode()))) {
+            onOpenSheet(PlayerSheet.LOOP)
+        }
+        ControlIcon(Icons.Outlined.Timer, context.getString(R.string.player_sub_delay)) {
+            onOpenSheet(PlayerSheet.SUBTITLE_DELAY)
+        }
+        ControlIcon(Icons.Outlined.PhotoCamera, context.getString(R.string.player_screenshot), onScreenshot)
+        ControlIcon(Icons.Outlined.PictureInPictureAlt, context.getString(R.string.player_pip), onEnterPip)
     }
 }
 

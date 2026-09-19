@@ -26,6 +26,9 @@ object SettingsRoute
 object StreamRoute
 
 @Serializable
+object WebDavRoute
+
+@Serializable
 object HistoryRoute
 
 @Serializable

@@ -295,6 +295,13 @@ class MpvPlayer @Inject constructor(
             args += "-1"
             args += "start=${startMs / 1000.0}"
         }
+        // 认证头要在 loadfile 之前设好，否则第一次请求就发出去了。
+        // 空列表时 resetPerFileProperties 已经把属性清成 ""，这里跳过即可。
+        if (source.httpHeaders.isNotEmpty()) {
+            runCatching {
+                mpv?.setPropertyString("http-header-fields", source.httpHeaders.joinToString(","))
+            }.onFailure { Log.w(TAG, "设置 http-header-fields 失败", it) }
+        }
         runCatching { mpv?.command(args.toTypedArray()) }
             .onFailure { Log.e(TAG, "loadfile 失败", it) }
     }
@@ -434,6 +441,10 @@ class MpvPlayer @Inject constructor(
             mpv?.setPropertyString("video-aspect-override", "no")
             mpv?.setPropertyDouble("sub-delay", 0.0)
             mpv?.setPropertyDouble("audio-delay", 0.0)
+            // http-header-fields 也是全局运行时属性，不清掉的话上一个源
+            // （比如带 Basic 认证的 WebDAV）的 Authorization 头会跟着发给
+            // 下一个源 —— 既是凭据外泄，也会让无关的请求带上不该有的头。
+            mpv?.setPropertyString("http-header-fields", "")
         }.onFailure { Log.w(TAG, "复位按文件属性失败", it) }
     }
 

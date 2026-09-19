@@ -56,6 +56,14 @@ data class AppSettings(
     val longPressSpeed: Float = 3f,
     /** 0 不循环 / 1 列表循环 / 2 单曲循环 */
     val loopMode: Int = 0,
+    /**
+     * WebDAV 服务器列表（JSON 数组）。
+     *
+     * 存 JSON 而不是 DataStore 的 stringSet：一个账号有 4 个字段，
+     * 塞进 Set<String> 就得自己拼分隔符，而 URL 与密码里都可能出现分隔符，
+     * 一不小心就解析错位。序列化成 JSON 是唯一稳的做法。
+     */
+    val webDavAccountsJson: String = "",
 )
 
 private val Context.settingsDataStore: DataStore<Preferences> by
@@ -75,6 +83,7 @@ private object Keys {
     val SEEK_STEP = intPreferencesKey("seek_step_seconds")
     val LONG_PRESS_SPEED = floatPreferencesKey("long_press_speed")
     val LOOP_MODE = intPreferencesKey("loop_mode")
+    val WEBDAV_ACCOUNTS = stringPreferencesKey("webdav_accounts")
 }
 
 /**
@@ -126,6 +135,7 @@ class SettingsRepository @Inject constructor(
             prefs[Keys.SEEK_STEP] = next.seekStepSeconds
             prefs[Keys.LONG_PRESS_SPEED] = next.longPressSpeed
             prefs[Keys.LOOP_MODE] = next.loopMode
+            prefs[Keys.WEBDAV_ACCOUNTS] = next.webDavAccountsJson
         }
     }
 
@@ -150,5 +160,6 @@ private fun Preferences.toAppSettings(): AppSettings {
         seekStepSeconds = this[Keys.SEEK_STEP] ?: defaults.seekStepSeconds,
         longPressSpeed = this[Keys.LONG_PRESS_SPEED] ?: defaults.longPressSpeed,
         loopMode = this[Keys.LOOP_MODE] ?: defaults.loopMode,
+        webDavAccountsJson = this[Keys.WEBDAV_ACCOUNTS] ?: defaults.webDavAccountsJson,
     )
 }

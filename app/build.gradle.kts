@@ -241,5 +241,9 @@ dependencies {
     // 播放内核：libmpv（预编译 AAR，含四套 ABI 的 libmpv/libplayer/FFmpeg .so）
     implementation(libs.libmpv)
 
+    // WebDAV 的 HTTP 客户端。只为 OkHttp 而来 —— WebDAV 协议本身自己实现，
+    // 免得被 sardine(jaxb/httpclient) 或 dav4jvm(xpp3→R8 冲突) 拖累。
+    implementation(libs.okhttp)
+
     testImplementation(libs.junit)
 }

@@ -24,6 +24,8 @@ import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
+import com.kyant.backdrop.highlight.Highlight
+import com.kyant.backdrop.shadow.Shadow
 
 /**
  * 液态玻璃（Liquid Glass）基础设施。
@@ -119,6 +121,9 @@ private fun BackgroundGlow() {
 /**
  * 把任意容器变成一块液态玻璃。
  *
+ * 这是「基础款」：模糊 + 提亮 +（形状允许时）边缘折射。
+ * 想要带高光 / 投影 / 按压反馈的完整版，用 [liquidGlassSurface]。
+ *
  * @param backdrop 采样源。为 null 时退化成普通半透明表面 —— 即使玻璃层没准备好，
  *        界面也不会变成透明的「空洞」。
  * @param shape 玻璃的形状。必须是 [CornerBasedShape]（`RoundedCornerShape` /
@@ -154,7 +159,24 @@ fun Modifier.liquidGlass(
                 lens(lensAmount.toPx(), lensAmount.toPx() * 2f)
             }
         },
+        // 默认的 Highlight / Shadow 在浅色主题下会糊成灰边，这里显式给一套更克制的。
+        highlight = { GlassDefaults.highlight },
+        shadow = { GlassDefaults.shadow },
     )
+}
+
+/**
+ * 玻璃的默认光影参数。
+ *
+ * 单独抽出来是为了「底栏」「控制层」「按钮」用同一套观感 ——
+ * 各写各的很容易调出深浅不一的玻璃，看着像不同材质拼起来的。
+ */
+object GlassDefaults {
+    /** 顶边那条细高光，玻璃「有厚度」的主要来源。 */
+    val highlight: Highlight = Highlight.Default.copy(alpha = 0.55f)
+
+    /** 底部投影。默认值偏重，压到 0.8 更贴合浮动条。 */
+    val shadow: Shadow = Shadow.Default.copy(alpha = 0.8f)
 }
 
 /**
@@ -167,19 +189,24 @@ fun Modifier.liquidGlass(
  *    都有一致的对比度，玻璃只负责那层「通透感」。
  * 2. 兜底色用黑色而不是主题的 `surface`：浅色主题下用 surface 兜底会在视频上
  *    糊出一块白板。
+ *
+ * 播放页的玻璃刻意**不做折射**（lensAmount 传 0 即关掉）：
+ * 面板底下是动态画面，边缘折射会随每一帧变化，既看不出「玻璃质感」，
+ * 又在每秒 60 帧地上跑 runtime shader —— 纯属白烧性能。
+ * 换成一层固定高光 + 投影，观感更稳，开销几乎为零。
  */
 @Composable
 fun Modifier.playerGlass(
     backdrop: Backdrop?,
     shape: Shape,
     blurRadius: Dp = 24.dp,
-    lensAmount: Dp = 12.dp,
+    lensAmount: Dp = 0.dp,
 ): Modifier {
     val scrim = this.background(Color.Black.copy(alpha = 0.30f), shape)
     if (backdrop == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
         return scrim
     }
-    val supportsLens = shape is CornerBasedShape
+    val supportsLens = lensAmount > 0.dp && shape is CornerBasedShape
     return scrim.drawBackdrop(
         backdrop = backdrop,
         shape = { shape },
@@ -190,5 +217,7 @@ fun Modifier.playerGlass(
                 lens(lensAmount.toPx(), lensAmount.toPx() * 2f)
             }
         },
+        highlight = { Highlight.Default.copy(alpha = 0.35f) },
+        shadow = { Shadow(alpha = 0.6f) },
     )
 }

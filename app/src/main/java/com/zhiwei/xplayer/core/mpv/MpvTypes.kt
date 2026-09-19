@@ -69,6 +69,11 @@ data class MpvTrack(
  *
  * [uri] 直接交给 mpv 的 `loadfile`：`content://` 由 FFmpeg 的 Android content
  * 协议处理，`http(s)://` / `rtsp://` / `rtmp://` / `udp://` 由 FFmpeg 的网络协议栈处理。
+ *
+ * [httpHeaders] 是给网络源额外附加的请求头（形如 `Name: Value`），会通过 mpv 的
+ * `http-header-fields` 属性下发。**需要 Basic 认证的源必须走这里，不要往 [uri]
+ * 里塞 `user:pass@`** —— uri 会被写进播放历史（Room 表）并显示在界面上，
+ * 密码会跟着一起落盘和露出来。
  */
 data class PlaybackSource(
     val uri: String,
@@ -76,6 +81,7 @@ data class PlaybackSource(
     val isNetwork: Boolean = false,
     val extraSubtitles: List<String> = emptyList(),
     val startPositionMs: Long = 0L,
+    val httpHeaders: List<String> = emptyList(),
 )
 
 /**

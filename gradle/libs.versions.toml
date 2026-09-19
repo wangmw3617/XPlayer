@@ -6,14 +6,13 @@ agp = "8.10.1"
 # Kotlin 元数据不向下兼容：依赖用 Kotlin X 编的，消费者编译器就得 ≥X。
 # 看依赖 POM 里的 kotlin-stdlib 版本即可：
 #
-#   backdrop 1.0.0 / 1.0.1 / 1.0.2   ->  2.2.21   （且不依赖 shapes）
+#   backdrop 1.0.0 / 1.0.1 / 1.0.2   ->  2.2.21
 #   backdrop 1.0.3 / 1.0.4           ->  2.3.0
-#   backdrop 1.0.5                   ->  2.3.0    + shapes 1.0.0
-#   backdrop 1.0.6                   ->  2.3.10   + shapes 1.2.0
+#   backdrop 1.0.5 / 1.0.6           ->  2.3.0 / 2.3.10
 #   backdrop 2.0.0 / 2.0.1           ->  2.3.21 / 2.4.10
 #
-# 取 1.0.2：唯一「Kotlin 2.2.21 + 不带 shapes」的版本，于是 Kotlin 可以停在
-# 2.2.21，Hilt 也就不用动。若升到 1.0.6 则要求 Kotlin ≥2.3.10，而 Kotlin 2.3
+# 取 1.0.2：唯一要求 Kotlin 2.2.21 的版本，于是 Kotlin 可以停在 2.2.21，
+# Hilt 也就不用动。若升到 1.0.6 则要求 Kotlin ≥2.3.10，而 Kotlin 2.3
 # 的元数据 Hilt 读不了，得升 Hilt；Hilt 2.60 又要求 AGP ≥9 —— 连锁升版。
 kotlin = "2.2.21"
 # KSP 2.2 及以前是 <kotlin>-<ksp> 格式；2.3.0 起才改成与 Kotlin 对齐的纯版本号
@@ -46,9 +45,16 @@ coroutines = "1.11.0"
 # （Backdrop / drawBackdrop / layerBackdrop），不含任何高层组件 ——
 # 卡片、导航栏、控制层都要自己按原语拼。
 #
-# 停在 1.0.2 的三个理由见上方 Kotlin 注释；1.0.2 与 1.0.6 的公开 API
+# 停在 1.0.2 的理由见上方 Kotlin 注释；1.0.2 与 1.0.6 的公开 API
 # 逐项核对过完全一致（drawBackdrop / blur / lens / vibrancy /
 # rememberLayerBackdrop / layerBackdrop）。
+#
+# 注意：backdrop 1.0.2 **不依赖** io.github.kyant0:shapes-android，
+# 它的 lens() 只认 androidx 的 CornerBasedShape 与 kyant 的
+# RoundedRectangularShape。项目里需要胶囊形的地方用 Compose 自带的
+# RoundedCornerShape(percent = 50)（见 theme/glass/LiquidBottomTab.kt
+# 的 CapsuleShape），不要引入 shapes-android —— 那个库要求
+# kotlin-stdlib 2.3.0，会顶穿上面这条版本链。
 # ---------------------------------------------------------------------------
 liquidGlass = "1.0.2"
 
@@ -67,6 +73,31 @@ liquidGlass = "1.0.2"
 # FFmpeg/mpv 交叉编译，CI 上动辄一小时以上且极易受上游漂移影响。
 # ---------------------------------------------------------------------------
 libmpv = "1.0.0"
+
+# ---------------------------------------------------------------------------
+# WebDAV 的 HTTP 客户端：OkHttp
+#
+# 为什么用 OkHttp 自己实现 WebDAV，而不是引现成的 WebDAV 库：
+#
+# 1. `com.github.thegrizzlylabs:sardine-android` 只发在 **JitPack**，
+#    Maven Central 上没有。为了一个库多挂一个仓库，CI 上就多一个外部依赖点，
+#    JitPack 偶发构建失败会直接挂掉出包。
+# 2. `com.github.lookfirst:sardine:5.13` 在 Central 上，但它拉
+#    `org.apache.httpcomponents:httpclient` + `jakarta.xml.bind` +
+#    `org.glassfish.jaxb:jaxb-runtime`。JAXB 在 Android 上要额外打
+#    jaxb-runtime 的字节码，包体与 R8 复杂度都不划算。
+# 3. `com.github.bitfireAT:dav4jvm` 也只在 JitPack；且历史版本会传递
+#    `org.ogce:xpp3`（内含 294 个 `org.xmlpull.*` 类），在 release 的 R8
+#    阶段会撞 `Library class android.content.res.XmlResourceParser
+#    implements program class org.xmlpull.v1.XmlPullParser`。
+#
+# 而播放器真正需要的 WebDAV 面很窄：PROPFIND 列目录 + GET/HEAD 取文件 +
+# Basic 鉴权，XML 用 Android 自带的 `XmlPullParser` 解析（零新依赖）。
+# 所以这里只引 OkHttp，其余自己写 —— 依赖树干净，R8 无隐患。
+#
+# OkHttp 5.x 要求 kotlin-stdlib ≥2.1.21（低于本项目的 2.2.21，安全）。
+# ---------------------------------------------------------------------------
+okhttp = "5.5.0"
 
 junit = "4.13.2"
 
@@ -111,6 +142,9 @@ kyant-backdrop = { module = "io.github.kyant0:backdrop", version.ref = "liquidGl
 
 # 播放内核（见上方 versions 注释）
 libmpv = { module = "dev.jdtech.mpv:libmpv", version.ref = "libmpv" }
+
+# WebDAV 的 HTTP 客户端（见上方 versions 注释）
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 
 junit = { module = "junit:junit", version.ref = "junit" }
 
