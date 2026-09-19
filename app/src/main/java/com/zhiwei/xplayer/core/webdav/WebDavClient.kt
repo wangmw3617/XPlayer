@@ -181,8 +181,11 @@ class WebDavClient(
      * ```
      *
      * 注意三点：
-     * 1. 命名空间前缀各家不同（`d:` / `D:` / `lp1:`），所以只比较**本地名**，
-     *    绝不能用 `parser.name == "d:href"`；
+     * 1. 命名空间前缀各家不同（`d:` / `D:` / `lp1:`）。开启
+     *    FEATURE_PROCESS_NAMESPACES 后，`XmlPullParser.getName()`（Kotlin 里是
+     *    属性 `parser.name`）返回的是**本地名**，不带前缀；而
+     *    `parser.getPrefix()` 才是前缀。所以可以直接 `parser.name == "href"`，
+     *    绝不能写成 `"d:href"` —— 换个服务端前缀就匹配不上了；
      * 2. 每个 response 里可能有多个 `propstat`（200 一个、404 一个），
      *    只有 `status` 含 200 的那个才可信；
      * 3. 第一个 response 通常是**目录自身**（href 就是请求路径），要跳过，
@@ -227,7 +230,9 @@ class WebDavClient(
         var event = parser.eventType
         while (event != XmlPullParser.END_DOCUMENT) {
             when (event) {
-                XmlPullParser.START_TAG -> when (parser.localName) {
+                // 注意：org.xmlpull.v1.XmlPullParser 的方法叫 getName()，
+                // 没有 localName()。Kotlin 把 getName() 映射成属性 `name`。
+                XmlPullParser.START_TAG -> when (parser.name) {
                     "response" -> {
                         inResponse = true
                         // status 在 XML 里通常出现在 prop 之后，所以先默认「可接受」，
@@ -258,7 +263,7 @@ class WebDavClient(
                         contentType = parser.nextText().trim()
                     }
                 }
-                XmlPullParser.END_TAG -> if (parser.localName == "response") {
+                XmlPullParser.END_TAG -> if (parser.name == "response") {
                     if (inResponse) flush()
                     inResponse = false
                 }

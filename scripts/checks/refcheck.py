@@ -47,35 +47,36 @@ ALL_DECLARED_TYPES = set()
 # --------------------------------------------------------------------------
 # Java getter 误当函数调用
 #
-# Kotlin 见到 Java 的 `String getLocalName()` 会暴露成**属性** `localName`，
-# 写 `parser.localName()` 编译不过（Unresolved reference 'localName'）。
-# 这个坑真实踩过：XmlPullParser.localName() 导致 CI 编译失败。
+# Kotlin 见到 Java 的 `String getFoo()` 会暴露成**属性** `foo`，
+# 所以 `x.getFoo()` 与 `x.foo()` 都不对，正确写法是 `x.foo`。
+# 这个坑真实踩过两次：
+#   1. `parser.localName()` —— 名字根本不存在（XmlPullParser 叫 getName()）；
+#   2. 改成 `parser.localName` 依然错，因为没有这个方法。
+#      正确写法是 `parser.name`。
 #
-# 下面这张表是「Java 无参 getter 的名字 -> 正确的 Kotlin 属性名」。
-# 规则很确定：Kotlin 里如果某个 java 方法名以 get/set 开头，调用时一律去前缀
-# 且不加括号。这里只列本工程真正会碰到的 JDK/Android API。
+# 规则：`.<getterName>()` 形状（点号 + 已知 getter 名 + 空括号）一律报错。
+# 表里的值是「Kotlin 里正确的属性名」，而不是把 get/set 简单去前缀 ——
+# 例如 getName() 对应 name，但 localName() 根本不存在，正确名是 name。
 # --------------------------------------------------------------------------
 JAVA_GETTERS_AS_PROPERTIES = {
-    "localName": "localName",
-    "prefix": "prefix",
-    "namespace": "namespace",
-    "name": "name",
-    "text": "text",
-    "eventType": "eventType",
-    "readText": "readText",
+    # org.xmlpull.v1.XmlPullParser —— 注意：没有 localName()
+    "getName": "name",
+    "getPrefix": "prefix",
+    "getNamespace": "namespace",
+    "getText": "text",
+    "getEventType": "eventType",
     "getAttributeCount": "attributeCount",
     "getDepth": "depth",
     "getPositionDescription": "positionDescription",
     "getLineNumber": "lineNumber",
     "getColumnNumber": "columnNumber",
     "getInputEncoding": "inputEncoding",
-    "isWhitespace": "isWhitespace",
     "isEmptyElementTag": "isEmptyElementTag",
-    "getCause": "cause",
+    # 常见 JDK / Android
     "getMessage": "message",
+    "getCause": "cause",
     "getStatusCode": "statusCode",
     "getResponseCode": "responseCode",
-    "getHeaderField": "headerField",
     "getContentLength": "contentLength",
     "getContentType": "contentType",
     "getLastModified": "lastModified",
@@ -94,12 +95,7 @@ JAVA_GETTERS_AS_PROPERTIES = {
 }
 
 # 这些名字在 Kotlin/Compose 里**确实**是函数，别误报
-NOT_JAVA_GETTERS = {
-    "readText",
-    "nextText",
-    "getName",
-    "setName",
-}
+NOT_JAVA_GETTERS: set = set()
 
 
 def collect_declared(root):
