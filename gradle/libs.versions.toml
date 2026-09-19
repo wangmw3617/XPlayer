@@ -95,9 +95,27 @@ libmpv = "1.0.0"
 # Basic 鉴权，XML 用 Android 自带的 `XmlPullParser` 解析（零新依赖）。
 # 所以这里只引 OkHttp，其余自己写 —— 依赖树干净，R8 无隐患。
 #
-# OkHttp 5.x 要求 kotlin-stdlib ≥2.1.21（低于本项目的 2.2.21，安全）。
+# 版本锁在 5.3.0，有两条硬约束同时成立才可选（已逐个解包 AAR 元数据核对）：
+#
+#   okhttp-android  minCompileSdk  kotlin-stdlib
+#   ─────────────────────────────────────────────
+#   5.2.0           1              2.2.20
+#   5.3.0           1              2.2.21   ← 选它
+#   5.4.0          36              2.1.21
+#   5.5.0          37              2.1.21   ← 曾用它，CI 报错
+#
+# 1. `minCompileSdk` 必须 ≤36。5.5.0 声明 37，而本项目 compileSdk 锁死 36
+#    （AGP 8.10.1 的上限，见上方工具链说明），`checkDebugAarMetadata` 会直接
+#    失败：`requires ... compile against version 37 or later of the Android APIs`。
+#    5.4.0 起跳到 36/37，5.3.0 还是 1，是最后一个能用的版本。
+# 2. `kotlin-stdlib` 不能高于本项目的 Kotlin（2.2.21），否则 Gradle 选高版本，
+#    与 KSP/Hilt 编译出的 metadata 对不上。5.3.0 恰好是 2.2.21，正好齐平。
+#
+# 另外必须同时声明 `okhttp-android`：`okhttp` 根 artifact 是个空壳，5.x 把
+# Android 侧实现（`Credentials`、`OkHttpClient` 的 Android 平台绑定）拆到了
+# `okhttp-android`，而且它是 optional 依赖，不会传递进来。
 # ---------------------------------------------------------------------------
-okhttp = "5.5.0"
+okhttp = "5.3.0"
 
 junit = "4.13.2"
 
@@ -145,6 +163,7 @@ libmpv = { module = "dev.jdtech.mpv:libmpv", version.ref = "libmpv" }
 
 # WebDAV 的 HTTP 客户端（见上方 versions 注释）
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+okhttp-android = { module = "com.squareup.okhttp3:okhttp-android", version.ref = "okhttp" }
 
 junit = { module = "junit:junit", version.ref = "junit" }
 

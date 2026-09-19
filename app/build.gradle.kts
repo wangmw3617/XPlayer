@@ -243,7 +243,10 @@ dependencies {
 
     // WebDAV 的 HTTP 客户端。只为 OkHttp 而来 —— WebDAV 协议本身自己实现，
     // 免得被 sardine(jaxb/httpclient) 或 dav4jvm(xpp3→R8 冲突) 拖累。
+    // 两个 artifact 都要：`okhttp` 是空壳，`Credentials` 与 Android 平台绑定
+    // 在 `okhttp-android`，且它是 optional 依赖不会传递进来。
     implementation(libs.okhttp)
+    implementation(libs.okhttp.android)
 
     testImplementation(libs.junit)
 }
