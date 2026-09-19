@@ -27,6 +27,8 @@ updates:
       #    backdrop 2.x  -> 要 minCompileSdk 37（AGP 8.10.1 不支持 37）
       #    Compose BOM / navigation / hilt-navigation
       #                  -> 新 AAR 的 minCompileSdk 同样超出当前上限
+      #    OkHttp 5.4+   -> minCompileSdk 跳到 36/37，撞上 compileSdk=36 的天花板
+      #                     （详见下面 OkHttp 那段的分版本表）
       #
       #  依赖名要**两种写法都列**：Dependabot 对 version catalog 有时按目录别名
       #  匹配（hilt / navigation），有时按 group:artifact 匹配，只写一种会漏掉。
@@ -52,6 +54,27 @@ updates:
       # core-ktx 1.19 起要求 AGP >= 9.1
       - dependency-name: "androidx.core:*"
       - dependency-name: "coreKtx"
+      # ----------------------------------------------------------------------
+      #  OkHttp 必须手工升，因为它有一个**硬上界**而非「跟随工具链」：
+      #
+      #    okhttp-android  minCompileSdk   kotlin-stdlib
+      #    ──────────────────────────────────────────────
+      #    5.2.0               1              2.2.20
+      #    5.3.0               1              2.2.21   ← 当前
+      #    5.4.0              36              2.1.21
+      #    5.5.0              37              2.1.21   ← 会直接失败
+      #
+      #  项目 compileSdk 锁 36，而 5.5.0 的 AAR 元数据要求 compile against
+      #  version 37 or later —— `:app:checkDebugAarMetadata` 会当场报错：
+      #    "Dependency 'com.squareup.okhttp3:okhttp-android:5.5.0' requires
+      #     ... compile against version 37 or later. :app is currently
+      #     compiled against android-36."
+      #  Dependabot 只看版本号，看不出这条约束，所以必须在这里挡住。
+      #  依赖名两种写法都列，理由同上面那条链。
+      # ----------------------------------------------------------------------
+      - dependency-name: "com.squareup.okhttp3:*"
+      - dependency-name: "okhttp"
+      - dependency-name: "okhttp-android"
       # Gradle 9 是 AGP 9 的前置条件，应当一起动；单独升会让 AGP 8.10.1
       # 跑在它未声明支持的 Gradle 上，而且 PR 只跑 build、不跑 release job
       - dependency-name: "gradle-wrapper"
