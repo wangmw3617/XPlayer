@@ -115,7 +115,7 @@ libmpv = "1.0.0"
 # Android 侧实现（`Credentials`、`OkHttpClient` 的 Android 平台绑定）拆到了
 # `okhttp-android`，而且它是 optional 依赖，不会传递进来。
 # ---------------------------------------------------------------------------
-okhttp = "5.3.0"
+okhttp = "5.5.0"
 
 junit = "4.13.2"
 
