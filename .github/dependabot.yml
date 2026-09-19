@@ -17,7 +17,10 @@ updates:
       # ----------------------------------------------------------------------
       #  这是一条**必须同时升**的链，拆开升必然互相卡住：
       #
-      #    AGP 9.x       -> 要 Gradle >= 9.6（当前 8.14.3）
+      #    AGP 9.x       -> 官方要求 Gradle >= 9.1.0、JDK 17、Build Tools 36.0.0、
+      #                      KGP >= 2.2.10；最大支持 API 36.1
+      #                      （注：AGP 9 强制新 DSL + 内置 Kotlin，
+      #                       org.jetbrains.kotlin.android 与新 DSL 不兼容）
       #    新 KSP        -> 要 AGP >= 8.12
       #    Hilt 2.60+    -> 报 "only compatible with AGP version 9.0.0 or higher"
       #    Kotlin 2.3+   -> Hilt 2.56 的 kotlin-metadata 读不了新元数据
