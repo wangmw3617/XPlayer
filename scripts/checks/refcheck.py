@@ -142,6 +142,55 @@ def strip_comments(text):
     return "\n".join(out)
 
 
+def strip_comments_for_getter_rule(text):
+    """给「Java getter 误当函数调用」这条规则用的、更激进的去注释。
+
+    为什么不直接复用 strip_comments：那个函数**故意**不处理块注释
+    （KDoc 里会贴 XML/代码片段，带 `*/` 的假块注释会把真实代码整段吃掉）。
+    但 getter 规则恰恰最怕 KDoc 里的代码示例 —— 本工程的 KDoc 里就写了
+    `parser.getName()` 这种**正确**的说明性文字，会被误报。
+
+    这里用状态机逐行处理，只在「确实进入块注释」时丢弃：
+    以 `/**` 或 `/*` 开头、到本行或后续某行的 `*/` 结束。
+    三引号字符串内部不改动。宁可漏报，不可误报。
+    """
+    out = []
+    in_block = False
+    in_raw = False
+    for line in text.splitlines():
+        if in_raw:
+            if line.count('"""') % 2 == 1:
+                in_raw = False
+            out.append(line)
+            continue
+        if line.count('"""') % 2 == 1:
+            in_raw = True
+            out.append(line)
+            continue
+
+        work = line
+        if in_block:
+            end = work.find("*/")
+            if end == -1:
+                out.append("")
+                continue
+            work = work[end + 2 :]
+            in_block = False
+
+        start = work.find("/*")
+        if start != -1:
+            end = work.find("*/", start + 2)
+            if end == -1:
+                in_block = True
+                work = work[:start]
+            else:
+                work = work[:start] + work[end + 2 :]
+
+        work = re.sub(r"//[^\n]*", "", work)
+        out.append(work)
+    return "\n".join(out)
+
+
 def body_after_imports(text):
     """返回「最后一个 import 之后」的全部内容。
 
@@ -164,11 +213,13 @@ def check_file(path):
 
     # Java getter 误当函数调用：`x.localName()` 应为 `x.localName`
     # 只在「点号 + 名字 + 空括号」这个形状上判断，精度足够高。
+    # 注意这里用的是「去掉块注释」的视图，避免 KDoc 里的示例代码触发误报。
+    getter_body = strip_comments_for_getter_rule(body)
     for getter in JAVA_GETTERS_AS_PROPERTIES:
         if getter in NOT_JAVA_GETTERS:
             continue
-        for m in re.finditer(r"\.\s*" + re.escape(getter) + r"\s*\(\s*\)", body):
-            line_no = body[: m.start()].count("\n") + 1
+        for m in re.finditer(r"\.\s*" + re.escape(getter) + r"\s*\(\s*\)", getter_body):
+            line_no = getter_body[: m.start()].count("\n") + 1
             problems.append(
                 f"{path}: Java getter 误当函数调用 -> .{getter}() "
                 f"应为 .{JAVA_GETTERS_AS_PROPERTIES[getter]}（约在代码体第 {line_no} 行）"
