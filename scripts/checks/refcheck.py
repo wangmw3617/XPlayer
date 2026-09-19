@@ -44,6 +44,63 @@ SCOPE_PROVIDED = {
 # 同包内互相引用的类型不需要 import，这里收集所有声明过的顶层类型名
 ALL_DECLARED_TYPES = set()
 
+# --------------------------------------------------------------------------
+# Java getter 误当函数调用
+#
+# Kotlin 见到 Java 的 `String getLocalName()` 会暴露成**属性** `localName`，
+# 写 `parser.localName()` 编译不过（Unresolved reference 'localName'）。
+# 这个坑真实踩过：XmlPullParser.localName() 导致 CI 编译失败。
+#
+# 下面这张表是「Java 无参 getter 的名字 -> 正确的 Kotlin 属性名」。
+# 规则很确定：Kotlin 里如果某个 java 方法名以 get/set 开头，调用时一律去前缀
+# 且不加括号。这里只列本工程真正会碰到的 JDK/Android API。
+# --------------------------------------------------------------------------
+JAVA_GETTERS_AS_PROPERTIES = {
+    "localName": "localName",
+    "prefix": "prefix",
+    "namespace": "namespace",
+    "name": "name",
+    "text": "text",
+    "eventType": "eventType",
+    "readText": "readText",
+    "getAttributeCount": "attributeCount",
+    "getDepth": "depth",
+    "getPositionDescription": "positionDescription",
+    "getLineNumber": "lineNumber",
+    "getColumnNumber": "columnNumber",
+    "getInputEncoding": "inputEncoding",
+    "isWhitespace": "isWhitespace",
+    "isEmptyElementTag": "isEmptyElementTag",
+    "getCause": "cause",
+    "getMessage": "message",
+    "getStatusCode": "statusCode",
+    "getResponseCode": "responseCode",
+    "getHeaderField": "headerField",
+    "getContentLength": "contentLength",
+    "getContentType": "contentType",
+    "getLastModified": "lastModified",
+    "getSize": "size",
+    "getTime": "time",
+    "getPath": "path",
+    "getParent": "parent",
+    "getScheme": "scheme",
+    "getHost": "host",
+    "getPort": "port",
+    "getQuery": "query",
+    "getFragment": "fragment",
+    "getAuthority": "authority",
+    "getUserInfo": "userInfo",
+    "getEncodedPath": "encodedPath",
+}
+
+# 这些名字在 Kotlin/Compose 里**确实**是函数，别误报
+NOT_JAVA_GETTERS = {
+    "readText",
+    "nextText",
+    "getName",
+    "setName",
+}
+
 
 def collect_declared(root):
     """先把整个工程声明的类型收起来，供「同包引用」判断用。"""
@@ -109,6 +166,18 @@ def check_file(path):
     text = strip_comments(raw)
     body = body_after_imports(text)
 
+    # Java getter 误当函数调用：`x.localName()` 应为 `x.localName`
+    # 只在「点号 + 名字 + 空括号」这个形状上判断，精度足够高。
+    for getter in JAVA_GETTERS_AS_PROPERTIES:
+        if getter in NOT_JAVA_GETTERS:
+            continue
+        for m in re.finditer(r"\.\s*" + re.escape(getter) + r"\s*\(\s*\)", body):
+            line_no = body[: m.start()].count("\n") + 1
+            problems.append(
+                f"{path}: Java getter 误当函数调用 -> .{getter}() "
+                f"应为 .{JAVA_GETTERS_AS_PROPERTIES[getter]}（约在代码体第 {line_no} 行）"
+            )
+
     imports = re.findall(r"^import\s+([\w.]+)(?:\s+as\s+(\w+))?", text, flags=re.M)
     for full, alias in imports:
         name = alias or full.rsplit(".", 1)[-1]
@@ -164,16 +233,25 @@ def main():
 
     unused = []
     maybe_missing = []
+    getter_errors = []
     collect_declared(root)
     files = sorted(kotlin_files(root))
     for path in files:
         for problem in check_file(path):
-            if "导入了但未使用" in problem:
+            if "Java getter 误当函数调用" in problem:
+                getter_errors.append(problem)
+            elif "导入了但未使用" in problem:
                 unused.append(problem)
             else:
                 maybe_missing.append(problem)
 
     print(f"扫描 {len(files)} 个 Kotlin 文件")
+
+    # 这一类是**确定的编译错误**（Kotlin 把 Java getter 暴露成属性），必须失败
+    if getter_errors:
+        print(f"  发现 {len(getter_errors)} 处 Java getter 误当函数调用（会编译失败）：")
+        for p in getter_errors:
+            print("    " + p)
 
     if maybe_missing:
         # 这些只是启发式提示：KDoc 里的代码示例、全限定名等都会误报，
@@ -187,6 +265,8 @@ def main():
         for p in unused:
             print("    " + p)
         print("未使用的 import 不影响编译，但会拖慢编译并让 R8 更难裁剪，建议删掉。")
+
+    if getter_errors or unused:
         return 1
 
     print("  未使用的 import：无")

@@ -143,7 +143,7 @@ fun WebDavBrowserScreen(
                     },
                     colors = AssistChipDefaults.assistChipColors(
                         labelColor = MaterialTheme.colorScheme.primary,
-                        leadingIconColor = MaterialTheme.colorScheme.primary,
+                        leadingIconContentColor = MaterialTheme.colorScheme.primary,
                     ),
                 )
             }

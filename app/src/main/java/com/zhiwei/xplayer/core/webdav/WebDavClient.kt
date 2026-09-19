@@ -227,7 +227,7 @@ class WebDavClient(
         var event = parser.eventType
         while (event != XmlPullParser.END_DOCUMENT) {
             when (event) {
-                XmlPullParser.START_TAG -> when (parser.localName()) {
+                XmlPullParser.START_TAG -> when (parser.localName) {
                     "response" -> {
                         inResponse = true
                         // status 在 XML 里通常出现在 prop 之后，所以先默认「可接受」，
@@ -258,7 +258,7 @@ class WebDavClient(
                         contentType = parser.nextText().trim()
                     }
                 }
-                XmlPullParser.END_TAG -> if (parser.localName() == "response") {
+                XmlPullParser.END_TAG -> if (parser.localName == "response") {
                     if (inResponse) flush()
                     inResponse = false
                 }
