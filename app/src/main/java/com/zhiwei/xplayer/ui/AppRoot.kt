@@ -53,6 +53,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.asAndroidColorFilter
+import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -473,7 +475,31 @@ private fun GlassBottomBar(
                     .fillMaxWidth()
                     .padding(horizontal = 4.dp)
                     // 染成主色：指示器折射出来的是「彩色的图标」
-                    .graphicsLayer(colorFilter = ColorFilter.tint(accentColor)),
+                    //
+                    // 这里**不能**写 `graphicsLayer(colorFilter = ...)`：
+                    // compose.ui:ui 里带 colorFilter 的 graphicsLayer 重载全部标了
+                    // @Deprecated(level = HIDDEN)（javap 确认），Kotlin 2.2 还会把它
+                    // 当作候选，Kotlin 2.3 不再接受，会报
+                    // 「No parameter with name 'colorFilter' found」。
+                    // 而 block 形式也走不通 —— GraphicsLayerScope 里根本没有 colorFilter
+                    // 这个属性（1.8.1 只有 Alpha/Clip/CompositingStrategy/RenderEffect/
+                    // Rotation*/Scale*/ShadowElevation/Shape/Size/TransformOrigin/Translation*
+                    // /AmbientShadowColor/SpotShadowColor）。
+                    //
+                    // 所以改用 renderEffect —— 它本来就是「图层级染色」的底层机制，
+                    // 与 colorFilter 等价，且 block 形式支持。
+                    // RenderEffect 需要 API 31；低版本跳过即可 —— 玻璃本身
+                    // （liquidGlass / drawBackdrop 的模糊与折射）在 31 以下同样不生效，
+                    // 这里保持一致，不会造成「有染色没折射」的错位。
+                    .graphicsLayer {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            renderEffect = android.graphics.RenderEffect
+                                .createColorFilterEffect(
+                                    ColorFilter.tint(accentColor).asAndroidColorFilter(),
+                                )
+                                .asComposeRenderEffect()
+                        }
+                    },
                 verticalAlignment = Alignment.CenterVertically,
                 content = tabContent,
             )

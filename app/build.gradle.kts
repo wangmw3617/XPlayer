@@ -1,8 +1,9 @@
+import com.android.build.api.variant.BuildConfigField
 import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
+    // 不再有 kotlin-android：AGP 9 起 Kotlin 编译内置，且该插件与新 DSL 不兼容。
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
@@ -87,20 +88,26 @@ logger.lifecycle(
 
 android {
     namespace = "com.zhiwei.xplayer"
-    compileSdk = 36
+    // AGP 9 新 DSL：compileSdk / minSdk / targetSdk 都从「赋值」变成「块」。
+    // 块里还能表达预览版（version = preview("VanillaIceCream")）与次版本，
+    // 这是旧 DSL 的单个 Int 表达不了的，也是这次改形的动机。
+    compileSdk {
+        version = release(36)
+    }
 
     defaultConfig {
         applicationId = "com.zhiwei.xplayer"
         // libmpv 的 AAR 声明 minSdkVersion=26，低于它会在合并清单时报错
-        minSdk = 26
-        targetSdk = 36
+        minSdk {
+            version = release(26)
+        }
+        targetSdk {
+            version = release(36)
+        }
         versionCode = versionCodeValue
         versionName = versionNameValue
 
         vectorDrawables.useSupportLibrary = true
-
-        buildConfigField("String", "LIBMPV_VERSION", "\"${libs.versions.libmpv.get()}\"")
-        buildConfigField("String", "LIQUID_GLASS_VERSION", "\"${libs.versions.liquidGlass.get()}\"")
     }
 
     // 按 ABI 拆包：每个 CPU 架构单独出一个 APK。
@@ -184,6 +191,44 @@ android {
     lint {
         abortOnError = false
         checkReleaseBuilds = false
+    }
+}
+
+// =============================================================================
+//  BuildConfig 自定义字段
+//
+//  AGP 9 起 defaultConfig 里的 buildConfigField(...) 没了，改用 Variant API。
+//  官方明确要求：**String 类型的 value 必须把引号写进去**，因为 value 是
+//  原样输出的 —— 写 "1.0.0" 会生成 `String LIBMPV_VERSION = 1.0.0;` 编译不过，
+//  必须写成 "\"1.0.0\""。（这里用 Kotlin 字符串模板拼引号，正是为了满足这条。）
+//
+//  参考：android/skills 的 agp-9-upgrade 技能 → references/buildconfig.md
+//       与 gradle-recipes 的 addCustomBuildConfigFields recipe。
+// =============================================================================
+androidComponents {
+    onVariants { variant ->
+        // buildConfigFields 的类型是可空的（MapProperty<...>?），必须用安全调用。
+        // 打开 buildFeatures.buildConfig 后它不会是 null；万一真是 null，
+        // 引用 BuildConfig.LIBMPV_VERSION 的地方会立刻编译失败，不会静默漏掉。
+        variant.buildConfigFields?.put(
+            "LIBMPV_VERSION",
+            BuildConfigField(
+                type = "String",
+                value = "\"${libs.versions.libmpv.get()}\"",
+                comment = "libmpv 播放内核版本",
+            ),
+        )
+        // buildConfigFields 的类型是可空的（MapProperty<...>?），必须用安全调用。
+        // 打开 buildFeatures.buildConfig 后它不会是 null；万一真是 null，
+        // 引用 BuildConfig.LIBMPV_VERSION 的地方会立刻编译失败，不会静默漏掉。
+        variant.buildConfigFields?.put(
+            "LIQUID_GLASS_VERSION",
+            BuildConfigField(
+                type = "String",
+                value = "\"${libs.versions.liquidGlass.get()}\"",
+                comment = "Liquid Glass（backdrop）版本",
+            ),
+        )
     }
 }
 

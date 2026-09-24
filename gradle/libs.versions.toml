@@ -1,26 +1,30 @@
 [versions]
-agp = "8.10.1"
+# AGP 9.4.1：Gradle ≥9.6、JDK 17、Build Tools 36.0.0，最高支持 API 37。
+# 升到它之后本机可以直接用 Android Studio 自带的 JBR（25）跑 Gradle，
+# 不再需要单独装 JDK 21 —— 见 gradle.properties 里的说明。
+agp = "9.4.1"
 
-# ⚠️ Kotlin 的版本被 Liquid Glass 依赖钉住上限，不是随便选的。
+# ⚠️ AGP 9 起 Kotlin 由 AGP 内置（android.builtInKotlin，默认开启），
+# 不再应用 org.jetbrains.kotlin.android 插件 —— 那个插件与新 DSL 不兼容。
 #
-# Kotlin 元数据不向下兼容：依赖用 Kotlin X 编的，消费者编译器就得 ≥X。
-# 看依赖 POM 里的 kotlin-stdlib 版本即可：
+# 内置 Kotlin 的 KGP 版本来自 buildscript classpath 的依赖仲裁：
+# AGP 9.4.1 自己依赖 kotlin-gradle-plugin:2.2.10，我们在顶层 buildscript
+# 显式声明 kotlin-gradle-plugin:2.3.21，Gradle 取高版本 → 内置 Kotlin 就是 2.3.21。
+# 这条是必需的：Compose 编译器插件、KSP 都必须与 Kotlin 版本严格对齐。
 #
-#   backdrop 1.0.0 / 1.0.1 / 1.0.2   ->  2.2.21
-#   backdrop 1.0.3 / 1.0.4           ->  2.3.0
-#   backdrop 1.0.5 / 1.0.6           ->  2.3.0 / 2.3.10
-#   backdrop 2.0.0 / 2.0.1           ->  2.3.21 / 2.4.10
-#
-# 取 1.0.2：唯一要求 Kotlin 2.2.21 的版本，于是 Kotlin 可以停在 2.2.21，
-# Hilt 也就不用动。若升到 1.0.6 则要求 Kotlin ≥2.3.10，而 Kotlin 2.3
-# 的元数据 Hilt 读不了，得升 Hilt；Hilt 2.60 又要求 AGP ≥9 —— 连锁升版。
-kotlin = "2.2.21"
-# KSP 2.2 及以前是 <kotlin>-<ksp> 格式；2.3.0 起才改成与 Kotlin 对齐的纯版本号
-ksp = "2.2.21-2.0.4"
+# 为什么必须 ≥2.3：
+#   KSP 2.3.6 才开始支持内置 Kotlin，但 KSP 2.3.10 才修掉
+#   「AGP 9 内置 Kotlin 下 R 类解析」（google/ksp#2857）——
+#   Hilt 与 Room 生成的代码都要引用 R 类，低于 2.3.10 会直接编译失败。
+kotlin = "2.3.21"
 
-# Hilt 停在 2.56.2：内置的 kotlin-metadata-jvm 最高支持元数据 2.2.0，
-# 正好覆盖 Kotlin 2.2.21。
-hilt = "2.56.2"
+# KSP 自 2.3.0 起改成自己的版本线（不再拼 <kotlin>-<ksp> 前缀），
+# 所以这里的 2.3.12 与 Kotlin 的 2.3.21 不是同一个数字体系，别对齐它们。
+ksp = "2.3.12"
+
+# Hilt 2.60.1：AGP 9 要求 Hilt ≥2.59.2（官方 agp-9-upgrade 技能 Step 1）。
+# 2.56.2 内置的 kotlin-metadata-jvm 只到 2.2.0，配 AGP 9 会读不了元数据。
+hilt = "2.60.1"
 
 coreKtx = "1.16.0"
 activityCompose = "1.10.1"
@@ -45,9 +49,12 @@ coroutines = "1.11.0"
 # （Backdrop / drawBackdrop / layerBackdrop），不含任何高层组件 ——
 # 卡片、导航栏、控制层都要自己按原语拼。
 #
-# 停在 1.0.2 的理由见上方 Kotlin 注释；1.0.2 与 1.0.6 的公开 API
-# 逐项核对过完全一致（drawBackdrop / blur / lens / vibrancy /
-# rememberLayerBackdrop / layerBackdrop）。
+# 停在 1.0.2。**Kotlin 元数据只向上兼容**（新编译器能读旧元数据，反之不行），
+# 1.0.2 用 Kotlin 2.2.21 编，在 Kotlin 2.3.21 下完全可读，所以升 AGP 9 不必动它。
+#
+# 现在 Kotlin 到 2.3.21 了，理论上可以升到 1.0.6（要求 Kotlin ≥2.3.10）。
+# 但那属于另一件事（1.0.x 之间公开 API 虽一致，仍要重新过一遍视觉与
+# InteractiveHighlight 的实现），本次 AGP 9 迁移刻意不夹带，留作后续。
 #
 # 注意：backdrop 1.0.2 **不依赖** io.github.kyant0:shapes-android，
 # 它的 lens() 只认 androidx 的 CornerBasedShape 与 kyant 的
@@ -167,9 +174,14 @@ okhttp-android = { module = "com.squareup.okhttp3:okhttp-android", version.ref =
 
 junit = { module = "junit:junit", version.ref = "junit" }
 
+# 只用于顶层 buildscript 的 classpath，给 AGP 的内置 Kotlin 提供 KGP 版本
+# （见上方 kotlin 注释）。不会被任何模块 implementation 引用。
+kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+# 注意：这里**没有** kotlin-android。
+# AGP 9 起 Kotlin 编译内置，且该插件与新 DSL 不兼容，已移除。
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }

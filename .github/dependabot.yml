@@ -15,31 +15,36 @@ updates:
     open-pull-requests-limit: 5
     ignore:
       # ----------------------------------------------------------------------
-      #  这是一条**必须同时升**的链，拆开升必然互相卡住：
+      #  当前工具链基线（2026-09 完成 AGP 9 迁移后）：
       #
-      #    AGP 9.x       -> 官方要求 Gradle >= 9.1.0、JDK 17、Build Tools 36.0.0、
-      #                      KGP >= 2.2.10；最大支持 API 36.1
-      #                      （注：AGP 9 强制新 DSL + 内置 Kotlin，
-      #                       org.jetbrains.kotlin.android 与新 DSL 不兼容）
-      #    新 KSP        -> 要 AGP >= 8.12
-      #    Hilt 2.60+    -> 报 "only compatible with AGP version 9.0.0 or higher"
-      #    Kotlin 2.3+   -> Hilt 2.56 的 kotlin-metadata 读不了新元数据
-      #    backdrop 2.x  -> 要 minCompileSdk 37（AGP 8.10.1 不支持 37）
-      #    Compose BOM / navigation / hilt-navigation
-      #                  -> 新 AAR 的 minCompileSdk 同样超出当前上限
-      #    OkHttp 5.4+   -> minCompileSdk 跳到 36/37，撞上 compileSdk=36 的天花板
-      #                     （详见下面 OkHttp 那段的分版本表）
+      #    Gradle 9.6.0 · AGP 9.4.1 · Kotlin 2.3.21（内置）· KSP 2.3.12
+      #    Hilt 2.60.1 · compileSdk/targetSdk 36 · minSdk 26
+      #
+      #  下面这些仍然要**手工整链升**，理由各自不同：
+      #
+      #    AGP            -> 9.x 的次版本可能要求更新的 Gradle；AGP 10 会强制
+      #                      新 DSL 并移除所有退出开关，是一次独立的迁移。
+      #    Gradle wrapper -> AGP 9.4 要求 Gradle >= 9.6.0。单独升 Gradle 会
+      #                      跑出 AGP 声明支持的范围，而且 PR 只跑 build、
+      #                      不跑 release job，签不出包也发现不了。
+      #    Kotlin         -> 版本由顶层 buildscript 的 classpath 决定
+      #                      （见 build.gradle.kts 里的说明）。改它必须同时
+      #                      改 kotlin.plugin.compose / kotlin.plugin.serialization
+      #                      （必须严格同版本）与 KSP，并确认 Hilt 能读新元数据。
+      #    KSP            -> 必须与 Kotlin 同一条线。注意 KSP 自 2.3.0 起改用
+      #                      自己的版本号，不再拼 <kotlin>-<ksp> 前缀。
+      #    Hilt           -> 必须同时兼容 AGP 9 与当前 Kotlin 元数据版本。
       #
       #  依赖名要**两种写法都列**：Dependabot 对 version catalog 有时按目录别名
       #  匹配（hilt / navigation），有时按 group:artifact 匹配，只写一种会漏掉。
       #
-      #  整链升级时手动做，约束细节见 gradle/libs.versions.toml 顶部注释。
+      #  约束细节见 gradle/libs.versions.toml 与 build.gradle.kts 的顶部注释。
       # ----------------------------------------------------------------------
       - dependency-name: "com.android.application"
       - dependency-name: "com.android.tools.build:*"
-      - dependency-name: "org.jetbrains.kotlin.android"
       - dependency-name: "org.jetbrains.kotlin.plugin.compose"
       - dependency-name: "org.jetbrains.kotlin.plugin.serialization"
+      - dependency-name: "kotlin-gradle-plugin"
       - dependency-name: "com.google.devtools.ksp"
       - dependency-name: "com.google.devtools.ksp:*"
       - dependency-name: "com.google.dagger:*"
@@ -47,37 +52,45 @@ updates:
       - dependency-name: "hilt"
       - dependency-name: "androidx.hilt:*"
       - dependency-name: "hiltNavigation"
+      - dependency-name: "gradle-wrapper"
+
+      # ----------------------------------------------------------------------
+      #  下面这一组不是「版本链」问题，而是 **compileSdk 天花板**问题。
+      #
+      #  项目 compileSdk 还是 36（AGP 9.4 已支持到 37，但提上去要连带
+      #  重测一遍，属于独立的一步）。而这些库的新版 AAR 陆续把
+      #  `minCompileSdk` 提到 37，撞上来会直接在 `:app:checkDebugAarMetadata`
+      #  失败，报：
+      #    Dependency '...' requires ... compile against version 37 or later.
+      #    :app is currently compiled against android-36.
+      #
+      #  Dependabot 只看版本号，读不出 AAR 元数据里的这条约束，所以只能在这里挡。
+      #
+      #  想解锁它们：先把 compileSdk/targetSdk 提到 37，然后逐个放开验证。
+      # ----------------------------------------------------------------------
       - dependency-name: "io.github.kyant0:*"
       - dependency-name: "androidx.compose:compose-bom"
       - dependency-name: "androidx.navigation:*"
       - dependency-name: "navigation"
-      # core-ktx 1.19 起要求 AGP >= 9.1
       - dependency-name: "androidx.core:*"
       - dependency-name: "coreKtx"
+
       # ----------------------------------------------------------------------
-      #  OkHttp 必须手工升，因为它有一个**硬上界**而非「跟随工具链」：
+      #  OkHttp 单独说明，因为它有个**实测出来的精确分界**：
       #
       #    okhttp-android  minCompileSdk   kotlin-stdlib
       #    ──────────────────────────────────────────────
       #    5.2.0               1              2.2.20
       #    5.3.0               1              2.2.21   ← 当前
       #    5.4.0              36              2.1.21
-      #    5.5.0              37              2.1.21   ← 会直接失败
+      #    5.5.0              37              2.1.21   ← 撞天花板
       #
-      #  项目 compileSdk 锁 36，而 5.5.0 的 AAR 元数据要求 compile against
-      #  version 37 or later —— `:app:checkDebugAarMetadata` 会当场报错：
-      #    "Dependency 'com.squareup.okhttp3:okhttp-android:5.5.0' requires
-      #     ... compile against version 37 or later. :app is currently
-      #     compiled against android-36."
-      #  Dependabot 只看版本号，看不出这条约束，所以必须在这里挡住。
-      #  依赖名两种写法都列，理由同上面那条链。
+      #  5.4.0 起就跳到 36/37。项目 compileSdk=36 时 5.4.0 勉强可用、
+      #  5.5.0 必挂。依赖名两种写法都列，理由同上。
       # ----------------------------------------------------------------------
       - dependency-name: "com.squareup.okhttp3:*"
       - dependency-name: "okhttp"
       - dependency-name: "okhttp-android"
-      # Gradle 9 是 AGP 9 的前置条件，应当一起动；单独升会让 AGP 8.10.1
-      # 跑在它未声明支持的 Gradle 上，而且 PR 只跑 build、不跑 release job
-      - dependency-name: "gradle-wrapper"
 
   # GitHub Actions 的版本升级不受上面那条链影响，独立升级
   - package-ecosystem: github-actions
