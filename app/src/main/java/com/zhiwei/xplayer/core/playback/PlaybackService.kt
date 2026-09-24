@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
@@ -26,7 +27,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -77,15 +77,46 @@ class PlaybackService : Service() {
         }
 
         scope.launch {
-            player.state.collectLatest { state ->
+            // 通知与会话**不能**跟着每一次 state 变化走。
+            //
+            // player.state 的发射频率跟 time-pos 一样高（每帧一次，最高 60Hz），
+            // 而推一次通知的实际开销是：
+            //   buildNotification 里 4 次 PendingIntent.getService（每次都是到系统
+            //   ActivityManager 的 binder 往返）+ 1 次 NotificationManager.notify，
+            //   再加上 setPlaybackState / setMetadata 两次 MediaSession 的 IPC。
+            // 全都在 Dispatchers.Main 上 —— 合起来每秒几百次主线程 IPC，
+            // 界面必卡，而且和当前在哪个页面无关。
+            //
+            // 现在分两类：
+            //   · 离散字段（暂停/缓冲/跳转中/标题/时长）一变 → 立刻推；
+            //   · 只有进度在走 → 最多每 POSITION_PUSH_INTERVAL_MS 推一次，
+            //     锁屏进度条与通知上的秒数不需要比这更细。
+            var lastKey: SessionKey? = null
+            var lastSecond = Long.MIN_VALUE
+            var lastPushedAt = 0L
+
+            player.state.collect { state ->
                 if (!state.idle && state.source != null) sawMedia = true
                 if (sawMedia && state.idle) {
                     // 播放已结束且没有新内容：没必要继续占着前台服务
                     stopPlayback()
-                    return@collectLatest
+                    return@collect
                 }
-                updateSession(state)
-                pushNotification(state)
+
+                val key = SessionKey.of(state)
+                val second = state.positionMs / 1000L
+                val now = SystemClock.elapsedRealtime()
+                val discreteChanged = key != lastKey
+                val positionDue = second != lastSecond &&
+                    now - lastPushedAt >= POSITION_PUSH_INTERVAL_MS
+
+                if (discreteChanged || positionDue) {
+                    lastKey = key
+                    lastSecond = second
+                    lastPushedAt = now
+                    updateSession(state)
+                    pushNotification(state)
+                }
             }
         }
     }
@@ -131,11 +162,15 @@ class PlaybackService : Service() {
         manager.createNotificationChannel(channel)
     }
 
-    private fun buildNotification(state: PlayerState): Notification {
-        val title = state.mediaTitle.ifBlank { state.source?.title ?: getString(R.string.app_name) }
-        val subtitle = buildSubtitle(state)
-
-        val contentIntent = PendingIntent.getActivity(
+    /**
+     * 通知里那几个 PendingIntent 的内容是**常量**，缓存起来。
+     *
+     * `PendingIntent.getActivity/getService` 每次都是一次到系统 ActivityManager
+     * 的 binder 往返。原来每推一次通知就重建 5 个（1 个 content + 4 个 action），
+     * 而通知推得又频繁 —— 白白制造大量主线程 IPC。
+     */
+    private val contentIntent: PendingIntent by lazy {
+        PendingIntent.getActivity(
             this,
             REQUEST_CONTENT,
             Intent(this, MainActivity::class.java).apply {
@@ -143,6 +178,16 @@ class PlaybackService : Service() {
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+    }
+
+    private val previousIntent: PendingIntent by lazy { serviceIntent(ACTION_PREVIOUS, REQUEST_PREVIOUS) }
+    private val toggleIntent: PendingIntent by lazy { serviceIntent(ACTION_TOGGLE, REQUEST_TOGGLE) }
+    private val nextIntent: PendingIntent by lazy { serviceIntent(ACTION_NEXT, REQUEST_NEXT) }
+    private val stopIntent: PendingIntent by lazy { serviceIntent(ACTION_STOP, REQUEST_STOP) }
+
+    private fun buildNotification(state: PlayerState): Notification {
+        val title = state.mediaTitle.ifBlank { state.source?.title ?: getString(R.string.app_name) }
+        val subtitle = buildSubtitle(state)
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
@@ -156,22 +201,22 @@ class PlaybackService : Service() {
             .addAction(
                 R.drawable.ic_notification,
                 getString(R.string.notif_action_prev),
-                serviceIntent(ACTION_PREVIOUS, REQUEST_PREVIOUS),
+                previousIntent,
             )
             .addAction(
                 R.drawable.ic_notification,
                 getString(if (state.paused) R.string.notif_action_play else R.string.notif_action_pause),
-                serviceIntent(ACTION_TOGGLE, REQUEST_TOGGLE),
+                toggleIntent,
             )
             .addAction(
                 R.drawable.ic_notification,
                 getString(R.string.notif_action_next),
-                serviceIntent(ACTION_NEXT, REQUEST_NEXT),
+                nextIntent,
             )
             .addAction(
                 R.drawable.ic_notification,
                 getString(R.string.notif_action_stop),
-                serviceIntent(ACTION_STOP, REQUEST_STOP),
+                stopIntent,
             )
 
         session?.let { active ->
@@ -272,6 +317,14 @@ class PlaybackService : Service() {
         private const val REQUEST_NEXT = 13
         private const val REQUEST_STOP = 14
 
+        /**
+         * 纯进度变化时两次推送之间的最小间隔。
+         *
+         * 通知上的时间是「分:秒」，锁屏进度条也不需要更细 —— 1 秒一次足够，
+         * 而 60Hz 推送会让主线程被 binder 调用淹掉（详见 onCreate 里的注释）。
+         */
+        private const val POSITION_PUSH_INTERVAL_MS = 1_000L
+
         const val ACTION_TOGGLE = "com.zhiwei.xplayer.action.TOGGLE"
         const val ACTION_PREVIOUS = "com.zhiwei.xplayer.action.PREVIOUS"
         const val ACTION_NEXT = "com.zhiwei.xplayer.action.NEXT"
@@ -290,5 +343,33 @@ class PlaybackService : Service() {
         fun stop(context: Context) {
             runCatching { context.stopService(Intent(context, PlaybackService::class.java)) }
         }
+    }
+}
+
+/**
+ * 通知与会话里那些「离散」字段。
+ *
+ * 这些字段一变就必须**立刻**推送，不能等节流窗口 —— 否则按了暂停、切了文件，
+ * 通知上的按钮和标题要过一秒才更新。
+ *
+ * 刻意**不含** `positionMs`：进度是连续变化的，它的推送由节流窗口控制。
+ */
+private data class SessionKey(
+    val paused: Boolean,
+    val buffering: Boolean,
+    val seeking: Boolean,
+    val idle: Boolean,
+    val title: String,
+    val durationMs: Long,
+) {
+    companion object {
+        fun of(state: PlayerState) = SessionKey(
+            paused = state.paused,
+            buffering = state.buffering,
+            seeking = state.seeking,
+            idle = state.idle,
+            title = state.mediaTitle.ifBlank { state.source?.title.orEmpty() },
+            durationMs = state.durationMs,
+        )
     }
 }
