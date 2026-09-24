@@ -46,6 +46,18 @@ class PlayerViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
+    /**
+     * 播放状态的原始数据流。
+     *
+     * ⚠ **不要在 Composable 里直接读它的 `.value`。**
+     *
+     * `StateFlow.value` 不是 Compose 的快照状态，`derivedStateOf` 观察不到它 ——
+     * 算一次就永远返回旧值，界面看起来像卡死了。播放页曾经就是这么写的，
+     * 表现是「点播放按钮没反应」。
+     *
+     * 界面侧请用 [com.zhiwei.xplayer.ui.player.rememberPlayerStateObserver]，
+     * 它内部先 `collectAsState` 再按字段派生，既正确又不会让整页跟着进度重组。
+     */
     val state: StateFlow<PlayerState> = player.state
     val log: SharedFlow<String> = player.log
     val messages: SharedFlow<String> = player.messages
@@ -101,11 +113,19 @@ class PlayerViewModel @Inject constructor(
         )
     }
 
+    /**
+     * 播放 / 暂停。
+     *
+     * 用 mpv 的 `cycle pause` 而不是「读当前状态再取反」：
+     * 界面上的 `paused` 是 mpv 通过属性回调异步推上来的，可能滞后于 mpv 的真实状态
+     * （尤其是连点两下的时候），读-改-写会把「暂停」又翻回「暂停」，看起来就是点了没反应。
+     * `cycle` 在 mpv 内部是原子的，不存在这个竞态。
+     */
     fun togglePlayPause() {
-        val wasPlaying = !player.state.value.paused
-        player.setPaused(!wasPlaying)
-        // 暂停瞬间补写一次，避免「暂停后直接杀进程」丢掉最后几秒
-        if (wasPlaying) recorder.flush()
+        player.togglePause()
+        // 无条件补写一次进度：暂停时避免「暂停后直接杀进程」丢掉最后几秒；
+        // 恢复播放时写一次也无害，写的就是当前位置。
+        recorder.flush()
     }
 
     fun screenshot() {

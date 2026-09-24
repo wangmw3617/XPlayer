@@ -179,7 +179,10 @@ fun AppRoot() {
         //
         // 内容铺满整屏，不给底栏预留位置 —— 这样它能滚到悬浮底栏下面，玻璃才有
         // 东西可以模糊。各一级页面自己在内容末尾留出底部空档，避免最后一项被挡住。
-        AppBackground(backdrop) {
+        //
+        // 播放页例外（sampling = false）：底栏在播放页不显示，没人消费这份录制，
+        // 而录制本身是全屏离屏渲染、每帧都要重来一次。详见 AppBackground 的注释。
+        AppBackground(backdrop, sampling = !isPlayer) {
             Column(Modifier.fillMaxSize()) {
                 // 播放页不要顶栏：视频要能顶到状态栏下面
                 if (!isPlayer) {

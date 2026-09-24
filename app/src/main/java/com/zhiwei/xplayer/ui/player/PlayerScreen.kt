@@ -54,7 +54,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -84,7 +83,6 @@ import com.zhiwei.xplayer.ui.components.SUBTITLE_MIME_TYPES
 import com.zhiwei.xplayer.ui.components.findActivity
 import com.zhiwei.xplayer.ui.components.rememberSubtitlePicker
 import com.zhiwei.xplayer.ui.theme.playerGlass
-import com.zhiwei.xplayer.ui.theme.rememberAppBackdrop
 import com.zhiwei.xplayer.ui.vm.PlayerViewModel
 import kotlinx.coroutines.delay
 import kotlin.math.abs
@@ -108,35 +106,22 @@ fun PlayerScreen(
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     val settings by viewModel.settings.collectAsStateWithLifecycle()
-    val backdrop = rememberAppBackdrop()
 
-    // ---- 状态切片 ----
-    // 不再在这里 collect 整份 PlayerState。原因：mpv 的 time-pos 每秒推好几次，
-    // 一旦整份快照被读进本作用域，本函数（含视频层与所有玻璃层）就会跟着重画。
-    // 这里按「谁需要谁订阅」拆开，把高频字段留给最里层的小组件去读。
-    val playerState = viewModel.state
-    val sourceUri by remember(playerState) {
-        derivedStateOf { playerState.value.source?.uri }
-    }
-    val backendKey by remember(playerState) {
-        derivedStateOf { playerState.value.hasMedia to playerState.value.error }
-    }
-    val hasMedia = backendKey.first
-    val error by remember(playerState) {
-        derivedStateOf { playerState.value.error }
-    }
-    val buffering by remember(playerState) {
-        derivedStateOf { playerState.value.buffering || (!playerState.value.idle && playerState.value.durationMs == 0L) }
-    }
-    val topBarTitle by remember(playerState) {
-        derivedStateOf { playerState.value.mediaTitle.ifBlank { playerState.value.source?.title.orEmpty() } }
-    }
-    val topBarSubtitle by remember(playerState) {
-        derivedStateOf { buildSubtitle(playerState.value) }
-    }
-    val hwdecActive by remember(playerState) {
-        derivedStateOf { playerState.value.hwdecActive }
-    }
+    // ---- 播放状态 ----
+    // 观察器把 PlayerState 拆成一组「各自独立失效」的字段。
+    //
+    // 这里刻意**不读**那些高频字段（进度、暂停、倍速…），而是把 getter 以 lambda
+    // 的形式交给最里层的小组件，让读取动作发生在那一层的组合作用域里 ——
+    // 于是「进度走秒」只会重组进度条那一行，不会连累视频层和整块玻璃面板。
+    //
+    // ⚠ 别改回 `derivedStateOf { viewModel.state.value.xxx }`：StateFlow.value
+    //   不是 Compose 快照状态，这样派生出来的值算一次就永远不再更新，
+    //   表现就是「点播放按钮没反应」。见 PlayerStateObserver 的注释与
+    //   ComposeStateObservationTest。
+    //
+    // 唯一在函数体里读的是 sourceUri：换文件时要用它做 key 复位画面参数，低频事件。
+    val player = rememberPlayerStateObserver(viewModel.state)
+    val sourceUri = player.sourceUri
     val ended = viewModel.player.ended
 
     var controlsVisible by remember { mutableStateOf(true) }
@@ -219,14 +204,6 @@ fun PlayerScreen(
     LaunchedEffect(sourceUri) {
         zoom = 1f
         aspect = ASPECT_DEFAULT
-    }
-
-    // 手势提示自动消失
-    LaunchedEffect(hint) {
-        if (hint != null) {
-            delay(HINT_DURATION_MS)
-            hint = null
-        }
     }
 
     // 播放结束把控制层亮出来，否则用户面对一张静止画面无从下手
@@ -359,51 +336,32 @@ fun PlayerScreen(
                 },
         )
 
-        // ③ 缓冲指示
-        if (buffering) {
-            CircularProgressIndicator(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .size(44.dp),
-                color = Color.White,
-            )
-        }
+        // ③ 缓冲指示。状态读在组件内部，只有它自己重组。
+        BufferingIndicator(
+            visible = { player.buffering },
+            modifier = Modifier.align(Alignment.Center),
+        )
 
-        // ④ 手势提示
-        hint?.let { text ->
-            Text(
-                text = text,
-                color = Color.White,
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .playerGlass(backdrop, RoundedCornerShape(16.dp), blurRadius = 18.dp)
-                    .padding(horizontal = 18.dp, vertical = 10.dp),
-            )
-        }
+        // ④ 手势提示。拖动进度时它每帧都在变 —— 读在组件内部，
+        //    否则整屏（含视频层与玻璃面板）会跟着手指一起重组。
+        GestureHint(
+            hint = { hint },
+            onExpired = { hint = null },
+            modifier = Modifier.align(Alignment.Center),
+        )
 
         // ⑤ 错误提示
-        error?.let { message ->
-            Text(
-                text = context.getString(R.string.player_error, message),
-                color = Color.White,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .windowInsetsPadding(WindowInsets.statusBars)
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
-                    .playerGlass(backdrop, RoundedCornerShape(14.dp), blurRadius = 16.dp)
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-            )
-        }
+        ErrorBanner(
+            message = { player.error },
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
 
         // ⑥ 控制层
         if (controlsVisible) {
             PlayerTopBar(
-                title = topBarTitle,
-                subtitle = topBarSubtitle,
-                hwdecActive = hwdecActive,
-                backdrop = backdrop,
+                title = { player.title },
+                subtitle = { player.subtitle },
+                hwdecActive = { player.hwdecActive },
                 onBack = {
                     if (!settings.backgroundPlayback) viewModel.stopPlayback()
                     onBack()
@@ -414,13 +372,12 @@ fun PlayerScreen(
             // 把高频字段包成 lambda：读取动作发生在 ProgressRow / TransportRow 内部，
             // 于是「进度走秒」只会让那一行重组，不会连累整块玻璃面板和视频层。
             PlayerControlPanel(
-                hasMedia = hasMedia,
-                backdrop = backdrop,
-                positionMs = { playerState.value.positionMs },
-                durationMs = { playerState.value.durationMs },
-                paused = { playerState.value.paused },
-                speed = { playerState.value.speed },
-                loopMode = { playerState.value.loopMode },
+                hasMedia = { player.hasMedia },
+                positionMs = { player.positionMs },
+                durationMs = { player.durationMs },
+                paused = { player.paused },
+                speed = { player.speed },
+                loopMode = { player.loopMode },
                 onTogglePlay = viewModel::togglePlayPause,
                 onPrevious = { viewModel.player.previous() },
                 onNext = { viewModel.player.next() },
@@ -428,7 +385,8 @@ fun PlayerScreen(
                 onSeekTo = { position -> viewModel.player.seekTo(position) },
                 onOpenSheet = { sheet = it },
                 onScreenshot = viewModel::screenshot,
-                onEnterPip = { enterPip(activity, playerState.value) },
+                // 画中画的比例要的是**当前**分辨率，用原始快照而不是量化过的显示值
+                onEnterPip = { enterPip(activity, viewModel.player.state.value) },
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
@@ -438,7 +396,7 @@ fun PlayerScreen(
     // 面板只在打开时组合，且需要整份快照（轨道列表等），所以这里才读整份 state。
     val activeSheet = sheet
     if (activeSheet != null) {
-        val snapshot = playerState.value
+        val snapshot = viewModel.player.state.value
         OptionSheet(
             title = sheetTitle(context, activeSheet),
             options = sheetOptions(
@@ -455,14 +413,79 @@ fun PlayerScreen(
     }
 }
 
+// ========================================================== 独立状态层 ====
+
+/**
+ * 缓冲转圈。
+ *
+ * 单独成组件是为了把「读缓冲状态」这件事关在自己内部：读在别处的话，
+ * 每次缓冲开关都会让整个播放页重组一遍。
+ */
+@Composable
+private fun BufferingIndicator(visible: () -> Boolean, modifier: Modifier = Modifier) {
+    if (!visible()) return
+    CircularProgressIndicator(
+        modifier = modifier.size(44.dp),
+        color = Color.White,
+    )
+}
+
+/**
+ * 手势提示条，附带自动消失。
+ *
+ * 自动消失的计时也放在这里：如果把 `LaunchedEffect(hint)` 写在播放页上，
+ * 那个 effect 每次提示变化都会重启，等于又把整页拖进重组。
+ */
+@Composable
+private fun GestureHint(
+    hint: () -> String?,
+    onExpired: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val text = hint() ?: return
+    LaunchedEffect(text) {
+        delay(HINT_DURATION_MS)
+        onExpired()
+    }
+    Text(
+        text = text,
+        color = Color.White,
+        style = MaterialTheme.typography.titleMedium,
+        modifier = modifier
+            .playerGlass(RoundedCornerShape(16.dp))
+            .padding(horizontal = 18.dp, vertical = 10.dp),
+    )
+}
+
+/** 错误横幅。同样把状态读关在内部。 */
+@Composable
+private fun ErrorBanner(message: () -> String?, modifier: Modifier = Modifier) {
+    val text = message() ?: return
+    Text(
+        text = LocalContext.current.getString(R.string.player_error, text),
+        color = Color.White,
+        style = MaterialTheme.typography.bodySmall,
+        modifier = modifier
+            .windowInsetsPadding(WindowInsets.statusBars)
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .playerGlass(RoundedCornerShape(14.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    )
+}
+
 // ============================================================== 顶栏 ====
 
+/**
+ * 顶栏。
+ *
+ * 标题与副标题都以 lambda 形式传入：副标题里有播放进度，每秒会变好几次，
+ * 读在播放页的函数体里就会把整页拖进重组。读在这里则最多只影响这一行。
+ */
 @Composable
 private fun PlayerTopBar(
-    title: String,
-    subtitle: String,
-    hwdecActive: String,
-    backdrop: com.kyant.backdrop.Backdrop,
+    title: () -> String,
+    subtitle: () -> String,
+    hwdecActive: () -> String,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -471,7 +494,7 @@ private fun PlayerTopBar(
             .fillMaxWidth()
             .windowInsetsPadding(WindowInsets.statusBars)
             .padding(horizontal = 12.dp, vertical = 8.dp)
-            .playerGlass(backdrop, RoundedCornerShape(20.dp), blurRadius = 20.dp)
+            .playerGlass(RoundedCornerShape(20.dp))
             .padding(horizontal = 6.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -484,15 +507,16 @@ private fun PlayerTopBar(
         }
         Column(Modifier.weight(1f)) {
             Text(
-                text = title,
+                text = title(),
                 color = Color.White,
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (subtitle.isNotBlank()) {
+            val sub = subtitle()
+            if (sub.isNotBlank()) {
                 Text(
-                    text = subtitle,
+                    text = sub,
                     color = Color.White.copy(alpha = 0.75f),
                     style = MaterialTheme.typography.labelSmall,
                     maxLines = 1,
@@ -500,9 +524,10 @@ private fun PlayerTopBar(
                 )
             }
         }
-        if (hwdecActive != "no" && hwdecActive.isNotBlank()) {
+        val hwdec = hwdecActive()
+        if (hwdec != "no" && hwdec.isNotBlank()) {
             Text(
-                text = hwdecActive,
+                text = hwdec,
                 color = Color.White.copy(alpha = 0.85f),
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier
@@ -520,19 +545,22 @@ private fun PlayerTopBar(
  * 播放控制面板。
  *
  * 这里刻意「只收窄参数、不收整个 [PlayerState]」：
- * `time-pos` 每秒会推好几次新快照，每推一次都会让 [PlayerState] 整体失效。
+ * `time-pos` 每帧都在变，每变一次都会让 [PlayerState] 整体失效。
  * 面板如果直接吃 `PlayerState`，进度、倍速、缓冲这些字段一变，
- * 整块面板（含 runtime shader 画的玻璃背景）都要重画一遍 —— 这就是卡顿的主因。
+ * 整块面板（含玻璃底板）都要重画一遍。
  *
  * 现在改成分工：
- * - 面板外壳只关心「有没有视频 / 缓冲中」这类低频字段；
+ * - 面板外壳只关心「有没有视频」这类低频字段；
  * - 进度区、播放按钮、功能栏各自读自己那一小片状态，
  *   状态变了也只让自己那一行重组。
+ *
+ * 另外所有参数都是「不可变值 + lambda」：`PlayerStateObserver` 是 `@Stable` 的，
+ * 所以这些 lambda 会被 Compose 记忆住，参数不变时整块面板可以被**跳过**，
+ * 连函数体都不进。
  */
 @Composable
 private fun PlayerControlPanel(
-    hasMedia: Boolean,
-    backdrop: com.kyant.backdrop.Backdrop,
+    hasMedia: () -> Boolean,
     positionMs: () -> Long,
     durationMs: () -> Long,
     paused: () -> Boolean,
@@ -555,7 +583,7 @@ private fun PlayerControlPanel(
             .fillMaxWidth()
             .windowInsetsPadding(WindowInsets.navigationBars)
             .padding(horizontal = 12.dp, vertical = 10.dp)
-            .playerGlass(backdrop, RoundedCornerShape(24.dp), blurRadius = 26.dp)
+            .playerGlass(RoundedCornerShape(24.dp))
             .padding(horizontal = 10.dp, vertical = 8.dp),
     ) {
         // ---- 进度 ----
@@ -566,7 +594,7 @@ private fun PlayerControlPanel(
         )
 
         // ---- 传输控制 ----
-        // paused 用 lambda 传入，进度更新不会把这一行也一起重组。
+        // paused / enabled 都用 lambda 传入，进度更新不会把这一行也一起重组。
         TransportRow(
             paused = paused,
             enabled = hasMedia,
@@ -644,7 +672,7 @@ private fun ProgressRow(
 @Composable
 private fun TransportRow(
     paused: () -> Boolean,
-    enabled: Boolean,
+    enabled: () -> Boolean,
     onTogglePlay: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
@@ -656,18 +684,18 @@ private fun TransportRow(
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onPrevious, enabled = enabled) {
+        IconButton(onClick = onPrevious, enabled = enabled()) {
             Icon(Icons.Filled.SkipPrevious, contentDescription = context.getString(R.string.player_prev), tint = Color.White)
         }
-        IconButton(onClick = { onSeekBy(-DEFAULT_SEEK_STEP_MS) }, enabled = enabled) {
+        IconButton(onClick = { onSeekBy(-DEFAULT_SEEK_STEP_MS) }, enabled = enabled()) {
             Icon(Icons.Filled.Replay10, contentDescription = context.getString(R.string.player_seek_back, 10), tint = Color.White)
         }
         // 播放/暂停是最高频操作，单独包一层：只有 paused 真正翻转时才重组图标。
         PlayPauseButton(paused = paused, onTogglePlay = onTogglePlay)
-        IconButton(onClick = { onSeekBy(DEFAULT_SEEK_STEP_MS) }, enabled = enabled) {
+        IconButton(onClick = { onSeekBy(DEFAULT_SEEK_STEP_MS) }, enabled = enabled()) {
             Icon(Icons.Filled.Forward10, contentDescription = context.getString(R.string.player_seek_forward, 10), tint = Color.White)
         }
-        IconButton(onClick = onNext, enabled = enabled) {
+        IconButton(onClick = onNext, enabled = enabled()) {
             Icon(Icons.Filled.SkipNext, contentDescription = context.getString(R.string.player_next), tint = Color.White)
         }
     }
@@ -676,8 +704,12 @@ private fun TransportRow(
 /**
  * 播放/暂停按钮。
  *
- * 只依赖 `paused` 这一位状态：进度更新不会重建这个按钮，
- * 点击也就不再因为上层重组而「看起来没反应」。
+ * 只依赖 `paused` 这一位状态：进度更新不会重建这个按钮。
+ *
+ * 注意「点了没反应」的真正原因不在这个按钮上 —— 是上层曾经用
+ * `derivedStateOf { stateFlow.value.paused }` 取值，而那个值永远不会更新。
+ * 现在 `paused()` 读的是 [PlayerStateObserver] 里按字段派生的状态，
+ * 读在这里、失效也精确到这里。
  */
 @Composable
 private fun PlayPauseButton(paused: () -> Boolean, onTogglePlay: () -> Unit) {
@@ -753,17 +785,6 @@ private fun ControlIcon(icon: ImageVector, label: String, onClick: () -> Unit) {
 }
 
 // ============================================================== 工具 ====
-
-private fun buildSubtitle(state: PlayerState): String {
-    if (state.durationMs <= 0L) return ""
-    val parts = mutableListOf(
-        "${Formatters.position(state.positionMs)} / ${Formatters.duration(state.durationMs)}",
-    )
-    if (state.videoWidth > 0 && state.videoHeight > 0) {
-        parts += "${state.videoWidth}×${state.videoHeight}"
-    }
-    return parts.joinToString(" · ")
-}
 
 private fun loopLabelRes(mode: Int): Int = when (mode) {
     1 -> R.string.loop_all

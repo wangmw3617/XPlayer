@@ -3,6 +3,7 @@ package com.zhiwei.xplayer.ui.theme
 import android.os.Build
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -63,15 +64,26 @@ fun rememberAppBackdrop(): LayerBackdrop = rememberLayerBackdrop()
  *
  * 它铺满全屏，并把 [content] 一起纳入采样范围 —— 这样页面内容滚到玻璃条下面时，
  * 玻璃能真的把它糊掉，而不是只糊一层背景色。
+ *
+ * @param sampling 是否把内容录进 [backdrop] 供玻璃采样。
+ *
+ *   **播放页必须传 false。** `layerBackdrop` 会把整棵子树录进一个 `GraphicsLayer`
+ *   （见库里的 `recordLayer`），而这个录制是**全屏离屏渲染**；只要子树里有任何东西
+ *   变化，整层就要重录。播放页上进度文本每秒变几十次，于是每帧都在做一次全屏离屏
+ *   渲染 —— 而播放页根本没有人消费这份录制结果（底栏在播放页不显示，播放页自己的
+ *   玻璃也采样不到 SurfaceView）。纯粹白烧。
  */
 @Composable
 fun AppBackground(
     backdrop: LayerBackdrop,
     modifier: Modifier = Modifier,
+    sampling: Boolean = true,
     content: @Composable () -> Unit,
 ) {
-    Box(modifier.fillMaxSize().layerBackdrop(backdrop)) {
-        BackgroundGlow()
+    val base = modifier.fillMaxSize()
+    Box(if (sampling) base.layerBackdrop(backdrop) else base) {
+        // 播放页会铺自己的纯黑背景，这层色斑画了也看不见
+        if (sampling) BackgroundGlow()
         content()
     }
 }
@@ -180,44 +192,47 @@ object GlassDefaults {
 }
 
 /**
- * 播放器页专用的玻璃。
+ * 播放器页专用的「玻璃」面板。
  *
- * 与 [liquidGlass] 的两点差别，都是因为「底下压着的是一块 SurfaceView」：
+ * ## 这里为什么不做真模糊
  *
- * 1. SurfaceView 是独立合成层，不属于 Compose 的图层树，玻璃采样不到它 ——
- *    模糊到的其实是一片透明。所以这里先垫一层 30% 黑，保证面板在任何画面上
- *    都有一致的对比度，玻璃只负责那层「通透感」。
- * 2. 兜底色用黑色而不是主题的 `surface`：浅色主题下用 surface 兜底会在视频上
- *    糊出一块白板。
+ * 播放页底下压着的是一块 [android.view.SurfaceView]，它是 SurfaceFlinger 直接合成
+ * 的独立图层，**不属于 Compose 的图层树** —— Compose 采不到它的像素，
+ * 所以「把画面糊掉」这件事在播放页从原理上就做不到。
  *
- * 播放页的玻璃刻意**不做折射**（lensAmount 传 0 即关掉）：
- * 面板底下是动态画面，边缘折射会随每一帧变化，既看不出「玻璃质感」，
- * 又在每秒 60 帧地上跑 runtime shader —— 纯属白烧性能。
- * 换成一层固定高光 + 投影，观感更稳，开销几乎为零。
+ * 之前这里走的是 `drawBackdrop`，但传进去的 backdrop 从来没被 `layerBackdrop`
+ * 挂载过，于是库里的 `LayerBackdrop.drawBackdrop` 会在两个空值守卫上直接 return：
+ *
+ * ```java
+ * if (coordinates == null) return;                             // 调用方坐标
+ * if (getLayerCoordinates$backdrop_release() == null) return;  // 采样层坐标
+ * ```
+ *
+ * 也就是说 blur / vibrancy / highlight / shadow **一个都没画出来**，
+ * 肉眼看到的只有下面那句 30% 黑底，同时还白搭一次 `drawBackdrop` 调用。
+ *
+ * 现在改成用最朴素的绘制原语把「玻璃观感」直接做出来：
+ * 压暗底 → 上沿受光渐变 → 一道极细描边。三次绘制、无离屏层、无 shader，
+ * 观感比原来那版（其实只有一块纯色）更接近玻璃，开销反而更低。
+ *
+ * @param shape 面板形状，决定圆角与描边走向。
  */
 @Composable
 fun Modifier.playerGlass(
-    backdrop: Backdrop?,
     shape: Shape,
-    blurRadius: Dp = 24.dp,
-    lensAmount: Dp = 0.dp,
 ): Modifier {
-    val scrim = this.background(Color.Black.copy(alpha = 0.30f), shape)
-    if (backdrop == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-        return scrim
-    }
-    val supportsLens = lensAmount > 0.dp && shape is CornerBasedShape
-    return scrim.drawBackdrop(
-        backdrop = backdrop,
-        shape = { shape },
-        effects = {
-            vibrancy()
-            blur(blurRadius.toPx())
-            if (supportsLens) {
-                lens(lensAmount.toPx(), lensAmount.toPx() * 2f)
-            }
-        },
-        highlight = { Highlight.Default.copy(alpha = 0.35f) },
-        shadow = { Shadow(alpha = 0.6f) },
-    )
+    return this
+        // 底：压暗。视频画面明暗不定，没有这层的话白字幕会糊在亮画面上。
+        .background(Color.Black.copy(alpha = 0.30f), shape)
+        // 上沿受光：玻璃「有厚度」的主要来源。
+        // 用带 shape 的 background 画，brush 会被裁进圆角，不必额外开 clip 图层。
+        .background(
+            Brush.verticalGradient(
+                0f to Color.White.copy(alpha = 0.10f),
+                0.45f to Color.Transparent,
+            ),
+            shape,
+        )
+        // 一道极细的白色描边，把面板从背景里「拎」出来
+        .border(0.5.dp, Color.White.copy(alpha = 0.12f), shape)
 }
