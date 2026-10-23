@@ -51,6 +51,14 @@ data class AppSettings(
     val autoLoadSubtitles: Boolean = true,
     val defaultAudioLanguage: String = "",
     val defaultSubtitleLanguage: String = "",
+    /** 双击画面左右侧跳转 10 秒 */
+    val doubleTapSeekEnabled: Boolean = true,
+    /** 横向滑动调节播放进度 */
+    val seekGestureEnabled: Boolean = false,
+    /** 左侧上下滑动调节亮度 */
+    val brightnessGestureEnabled: Boolean = false,
+    /** 右侧上下滑动调节音量 */
+    val volumeGestureEnabled: Boolean = false,
     /** 横向滑动一屏宽度对应的快进秒数 */
     val seekStepSeconds: Int = 90,
     /** 长按时的临时倍速 */
@@ -73,6 +81,10 @@ private object Keys {
     val AUTO_LOAD_SUBTITLES = booleanPreferencesKey("auto_load_subtitles")
     val ALANG = stringPreferencesKey("alang")
     val SLANG = stringPreferencesKey("slang")
+    val DOUBLE_TAP_SEEK = booleanPreferencesKey("double_tap_seek")
+    val SEEK_GESTURE = booleanPreferencesKey("seek_gesture")
+    val BRIGHTNESS_GESTURE = booleanPreferencesKey("brightness_gesture")
+    val VOLUME_GESTURE = booleanPreferencesKey("volume_gesture")
     val SEEK_STEP = intPreferencesKey("seek_step_seconds")
     val LONG_PRESS_SPEED = floatPreferencesKey("long_press_speed")
     val LOOP_MODE = intPreferencesKey("loop_mode")
@@ -125,6 +137,10 @@ class SettingsRepository @Inject constructor(
             prefs[Keys.AUTO_LOAD_SUBTITLES] = next.autoLoadSubtitles
             prefs[Keys.ALANG] = next.defaultAudioLanguage
             prefs[Keys.SLANG] = next.defaultSubtitleLanguage
+            prefs[Keys.DOUBLE_TAP_SEEK] = next.doubleTapSeekEnabled
+            prefs[Keys.SEEK_GESTURE] = next.seekGestureEnabled
+            prefs[Keys.BRIGHTNESS_GESTURE] = next.brightnessGestureEnabled
+            prefs[Keys.VOLUME_GESTURE] = next.volumeGestureEnabled
             prefs[Keys.SEEK_STEP] = next.seekStepSeconds
             prefs[Keys.LONG_PRESS_SPEED] = next.longPressSpeed
             prefs[Keys.LOOP_MODE] = next.loopMode
@@ -162,6 +178,10 @@ private fun Preferences.toAppSettings(): AppSettings {
         autoLoadSubtitles = this[Keys.AUTO_LOAD_SUBTITLES] ?: defaults.autoLoadSubtitles,
         defaultAudioLanguage = this[Keys.ALANG] ?: defaults.defaultAudioLanguage,
         defaultSubtitleLanguage = this[Keys.SLANG] ?: defaults.defaultSubtitleLanguage,
+        doubleTapSeekEnabled = this[Keys.DOUBLE_TAP_SEEK] ?: defaults.doubleTapSeekEnabled,
+        seekGestureEnabled = this[Keys.SEEK_GESTURE] ?: defaults.seekGestureEnabled,
+        brightnessGestureEnabled = this[Keys.BRIGHTNESS_GESTURE] ?: defaults.brightnessGestureEnabled,
+        volumeGestureEnabled = this[Keys.VOLUME_GESTURE] ?: defaults.volumeGestureEnabled,
         seekStepSeconds = this[Keys.SEEK_STEP] ?: defaults.seekStepSeconds,
         longPressSpeed = this[Keys.LONG_PRESS_SPEED] ?: defaults.longPressSpeed,
         loopMode = this[Keys.LOOP_MODE] ?: defaults.loopMode,

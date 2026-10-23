@@ -41,6 +41,14 @@ class SettingsViewModel @Inject constructor(
 
     fun setSubtitleLanguage(value: String) = mutate { it.copy(defaultSubtitleLanguage = value.trim()) }
 
+    fun setDoubleTapSeek(enabled: Boolean) = mutate { it.copy(doubleTapSeekEnabled = enabled) }
+
+    fun setSeekGesture(enabled: Boolean) = mutate { it.copy(seekGestureEnabled = enabled) }
+
+    fun setBrightnessGesture(enabled: Boolean) = mutate { it.copy(brightnessGestureEnabled = enabled) }
+
+    fun setVolumeGesture(enabled: Boolean) = mutate { it.copy(volumeGestureEnabled = enabled) }
+
     fun setSeekStep(seconds: Int) = mutate { it.copy(seekStepSeconds = seconds.coerceIn(10, 600)) }
 
     fun setLongPressSpeed(speed: Float) = mutate { it.copy(longPressSpeed = speed.coerceIn(1f, 8f)) }

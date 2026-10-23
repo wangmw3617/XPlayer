@@ -50,14 +50,29 @@ class PlayerStateObserverTest {
                 positionMs = 5_000L,
                 videoWidth = 1920,
                 videoHeight = 1080,
+                seekable = false,
             ),
         )
 
         assertTrue("时长解出后 hasMedia 必须为真", player.hasMedia)
         assertFalse("暂停状态必须跟着快照走", player.paused)
+        assertFalse("不可跳转流必须反映到 UI 观察器", player.seekable)
+        assertTrue("已知时长应被识别", player.durationKnown)
         assertEquals(60_000L, player.durationMs)
         assertEquals("movie.mp4", player.title)
         assertEquals("0:05 / 1:00 · 1920×1080", player.subtitle)
+    }
+
+    /** 未知时长的直播也必须被视为已有媒体，不能退回成空闲控制栏。 */
+    @Test
+    fun liveStreamWithUnknownDurationHasMedia() {
+        val (raw, player) = observerOf()
+
+        raw.put(PlayerState(idle = false, durationMs = 0L, seekable = false))
+
+        assertTrue(player.hasMedia)
+        assertFalse(player.durationKnown)
+        assertFalse(player.seekable)
     }
 
     /** 进度量化：避免 time-pos 每帧变化都驱动一次重组。 */
@@ -136,11 +151,11 @@ class PlayerStateObserverTest {
         assertEquals("content://a", player.sourceUri)
     }
 
-    /** 时长未知时不显示副标题，避免出现 `0:00 / --:--` 这种噪音。 */
+    /** 未知时长显示直播提示，而不是 `0:00 / --:--` 这种噪音。 */
     @Test
-    fun subtitleIsBlankBeforeDurationKnown() {
+    fun subtitleShowsLiveBeforeDurationKnown() {
         val (raw, player) = observerOf()
         raw.put(PlayerState(idle = false, positionMs = 3_000L, durationMs = 0L))
-        assertEquals("", player.subtitle)
+        assertEquals("直播或未知时长", player.subtitle)
     }
 }

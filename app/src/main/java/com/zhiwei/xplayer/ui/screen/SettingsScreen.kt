@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DarkMode
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Memory
@@ -56,7 +57,11 @@ import com.zhiwei.xplayer.ui.components.SectionHeader
 import com.zhiwei.xplayer.ui.vm.SettingsViewModel
 
 @Composable
-fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
+fun SettingsScreen(
+    onOpenGestures: () -> Unit,
+    onOpenSystemInfo: () -> Unit,
+    viewModel: SettingsViewModel = hiltViewModel(),
+) {
     val context = LocalContext.current
     val resources = rememberResources()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
@@ -211,15 +216,36 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             GlassCard {
                 InfoRow(
                     icon = Icons.Outlined.TouchApp,
-                    title = resources.getString(R.string.settings_seek_step),
-                    subtitle = "${settings.seekStepSeconds}s · ${resources.getString(R.string.settings_seek_step_desc)}",
-                    onClick = { textDialog = TextDialogKind.SeekStep },
+                    title = resources.getString(R.string.settings_gesture_controls),
+                    subtitle = resources.getString(R.string.settings_gesture_desc),
+                    trailing = {
+                        Icon(
+                            imageVector = Icons.Outlined.ChevronRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    },
+                    onClick = onOpenGestures,
                 )
+            }
+        }
+
+        // ------------------------------------------------------ 系统与硬件 ----
+        item { SectionHeader(resources.getString(R.string.settings_system_hardware_section)) }
+        item {
+            GlassCard {
                 InfoRow(
-                    icon = Icons.Outlined.Speed,
-                    title = resources.getString(R.string.settings_long_press_speed),
-                    subtitle = "${settings.longPressSpeed}x",
-                    onClick = { textDialog = TextDialogKind.LongPressSpeed },
+                    icon = Icons.Outlined.Memory,
+                    title = resources.getString(R.string.settings_system_hardware),
+                    subtitle = resources.getString(R.string.settings_system_hardware_desc),
+                    trailing = {
+                        Icon(
+                            imageVector = Icons.Outlined.ChevronRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    },
+                    onClick = onOpenSystemInfo,
                 )
             }
         }
@@ -260,7 +286,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
 }
 
 @Composable
-private fun SwitchRow(
+internal fun SwitchRow(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
     checked: Boolean,
@@ -279,7 +305,7 @@ private fun SwitchRow(
 }
 
 @Composable
-private fun TextInputDialog(
+internal fun TextInputDialog(
     title: String,
     initial: String,
     hint: String?,
@@ -341,15 +367,11 @@ private enum class TextDialogKind(
 ) {
     AudioLanguage(R.string.settings_alang, R.string.settings_language_hint, false),
     SubtitleLanguage(R.string.settings_slang, R.string.settings_language_hint, false),
-    SeekStep(R.string.settings_seek_step, null, true),
-    LongPressSpeed(R.string.settings_long_press_speed, null, true),
     ;
 
     fun initial(settings: AppSettings): String = when (this) {
         AudioLanguage -> settings.defaultAudioLanguage
         SubtitleLanguage -> settings.defaultSubtitleLanguage
-        SeekStep -> settings.seekStepSeconds.toString()
-        LongPressSpeed -> settings.longPressSpeed.toString()
     }
 
     fun apply(viewModel: SettingsViewModel, raw: String) {
@@ -357,8 +379,6 @@ private enum class TextDialogKind(
         when (this) {
             AudioLanguage -> viewModel.setAudioLanguage(value)
             SubtitleLanguage -> viewModel.setSubtitleLanguage(value)
-            SeekStep -> value.toIntOrNull()?.let(viewModel::setSeekStep)
-            LongPressSpeed -> value.toFloatOrNull()?.let(viewModel::setLongPressSpeed)
         }
     }
 }

@@ -23,6 +23,12 @@ object FolderRoute
 object SettingsRoute
 
 @Serializable
+object GestureSettingsRoute
+
+@Serializable
+object SystemInfoRoute
+
+@Serializable
 object StreamRoute
 
 @Serializable

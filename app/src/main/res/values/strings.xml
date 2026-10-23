@@ -61,6 +61,10 @@
     <string name="player_audio_track">音轨</string>
     <string name="player_sub_track">字幕</string>
     <string name="player_video_track">视频轨</string>
+    <string name="player_tools">播放工具</string>
+    <string name="player_playback_info">播放信息</string>
+    <string name="player_playback_info_desc">mpv 原始属性，每秒刷新</string>
+    <string name="player_live">直播</string>
     <string name="player_aspect">画面比例</string>
     <string name="player_loop">循环</string>
     <string name="player_screenshot">截图</string>
@@ -105,7 +109,7 @@
     <string name="settings_dynamic_color_desc">开启后主色跟随壁纸变化，需要 Android 12 及以上</string>
     <string name="settings_playback">播放</string>
     <string name="settings_hwdec">硬件解码</string>
-    <string name="settings_hwdec_desc">使用 MediaCodec 硬解，省电且支持高分辨率；个别机型上会有花屏或绿屏，遇到时关掉即可</string>
+    <string name="settings_hwdec_desc">让 libmpv 优先调用系统 MediaCodec 硬件解码，省电且支持高分辨率；个别机型上会有花屏或绿屏，遇到时关掉即可</string>
     <string name="settings_gpu_next">使用 gpu-next 渲染器</string>
     <string name="settings_gpu_next_desc">新一代渲染管线，色彩与 HDR 处理更好；老设备上可退回 gpu</string>
     <string name="settings_background">后台播放</string>
@@ -120,6 +124,18 @@
     <string name="settings_slang">首选字幕语言</string>
     <string name="settings_language_hint">如 zh、chi、eng，留空表示自动</string>
     <string name="settings_gesture">手势</string>
+    <string name="settings_gesture_controls">手势控制</string>
+    <string name="settings_gesture_desc">双击跳转、滑动调节与长按倍速</string>
+    <string name="gesture_touch_controls">触控开关</string>
+    <string name="gesture_double_tap_seek">双击两侧跳转 10 秒</string>
+    <string name="gesture_double_tap_seek_desc">双击左侧快退 10 秒，双击右侧快进 10 秒</string>
+    <string name="gesture_horizontal_seek">横向滑动调节进度</string>
+    <string name="gesture_horizontal_seek_desc">在画面上左右滑动调整播放位置</string>
+    <string name="gesture_brightness">左侧上下滑动调节亮度</string>
+    <string name="gesture_brightness_desc">在画面左半部分上下滑动调整窗口亮度</string>
+    <string name="gesture_volume">右侧上下滑动调节音量</string>
+    <string name="gesture_volume_desc">在画面右半部分上下滑动调整播放音量</string>
+    <string name="gesture_parameters">参数</string>
     <string name="settings_seek_step">横向滑动单位</string>
     <string name="settings_seek_step_desc">每滑过屏幕宽度对应多少秒</string>
     <string name="settings_long_press_speed">长按倍速</string>
@@ -130,8 +146,10 @@
     <string name="settings_glass">液态玻璃库</string>
     <string name="settings_reset">恢复默认设置</string>
     <string name="settings_reset_confirm">确定把所有设置恢复为默认值？</string>
+    <string name="player_orientation">切换横竖屏</string>
 
     <!-- 通用 -->
+    <string name="action_back">返回</string>
     <string name="action_ok">确定</string>
     <string name="action_cancel">取消</string>
     <!-- 通知 -->
@@ -162,4 +180,63 @@
     <string name="webdav_save_failed">无法安全保存服务器：%1$s</string>
     <string name="webdav_remove_failed">无法移除服务器：%1$s</string>
     <string name="webdav_unknown_error">未知错误</string>
+
+    <!-- 系统与硬件 -->
+    <string name="settings_system_hardware_section">系统与硬件</string>
+    <string name="settings_system_hardware">系统与硬件信息</string>
+    <string name="settings_system_hardware_desc">检测 HDR、Dolby Vision、MediaCodec 与当前 libmpv 播放链路</string>
+    <string name="system_info_intro">基于当前显示设备和系统公开的 MediaCodec 列表生成，不读取 IMEI、MAC 等设备标识。</string>
+    <string name="system_info_refresh">重新检测</string>
+    <string name="system_info_loading">正在读取系统能力…</string>
+    <string name="system_info_failed">检测未完成</string>
+    <string name="system_info_unknown">未报告</string>
+    <string name="system_info_not_detected">未检测到</string>
+    <string name="system_info_supported">支持</string>
+    <string name="system_info_unsupported">未报告</string>
+    <string name="system_info_section_device">设备</string>
+    <string name="system_info_device_model">设备型号</string>
+    <string name="system_info_device_android">Android</string>
+    <string name="system_info_device_patch">安全补丁</string>
+    <string name="system_info_device_soc">SoC / 硬件平台</string>
+    <string name="system_info_device_abi">CPU ABI</string>
+    <string name="system_info_device_ram">内存</string>
+    <string name="system_info_device_gles">OpenGL ES</string>
+    <string name="system_info_device_low_ram">低内存设备</string>
+    <string name="system_info_section_display">显示与 HDR</string>
+    <string name="system_info_display_resolution">当前分辨率</string>
+    <string name="system_info_display_refresh">当前刷新率</string>
+    <string name="system_info_display_hdr">显示端 HDR</string>
+    <string name="system_info_display_luminance">HDR 亮度范围</string>
+    <string name="system_info_display_luminance_average">平均峰值 %1$s cd/m²</string>
+    <string name="system_info_section_codec">MediaCodec 硬件解码</string>
+    <string name="system_info_codec_summary">解码器扫描</string>
+    <string name="system_info_codec_summary_value">硬件解码器 %1$d 个 · 软件解码器 %2$d 个</string>
+    <string name="system_info_codec_entry">%1$d 个硬解器</string>
+    <string name="system_info_codec_profiles">配置：%1$s</string>
+    <string name="system_info_codec_names">解码器：%1$s</string>
+    <string name="system_info_codec_no_hardware">未发现硬件解码器</string>
+    <string name="system_info_codec_scan_failed">MediaCodec 枚举失败：%1$s</string>
+    <string name="system_info_codec_tunneled">Tunneled</string>
+    <string name="system_info_codec_secure">Secure</string>
+    <string name="system_info_section_playback">XPlayer 播放链路</string>
+    <string name="system_info_playback_output">视频输出</string>
+    <string name="system_info_playback_hwdec_setting">硬解设置</string>
+    <string name="system_info_playback_hwdec_active">当前实际硬解</string>
+    <string name="system_info_playback_video">当前视频</string>
+    <string name="system_info_playback_pipeline">libmpv / FFmpeg 负责解复用与同步，MediaCodec 可选做硬解，随后由 gpu-next 和 GLES 输出到 SurfaceView。</string>
+    <string name="system_info_playback_pipeline_note">这条链路可做高质量 tone mapping 和色彩管理，但不保证 Dolby Vision / HDR10+ 动态元数据原样直通屏幕。</string>
+    <string name="system_info_pipeline">当前链路</string>
+    <string name="system_info_none_playing">当前没有播放视频</string>
+    <string name="system_info_section_compatibility">HDR 兼容性结论</string>
+    <string name="system_info_compatibility_display">显示端：%1$s</string>
+    <string name="system_info_compatibility_decoder">解码器：%1$s</string>
+    <string name="system_info_compatibility_tunnel">Tunneled：%1$s</string>
+    <string name="system_info_compatibility_profiles">Profile：%1$s</string>
+    <string name="system_info_verdict_native">原生直通候选</string>
+    <string name="system_info_verdict_native_desc">显示、硬件解码和 Tunneled 均满足候选条件，仍需用对应 Profile 的样片验证。</string>
+    <string name="system_info_verdict_partial">缺少 Tunneled 直通通道</string>
+    <string name="system_info_verdict_partial_desc">显示和解码能力已报告，但解码器未声明 Tunneled，动态元数据不保证原样送达显示端。</string>
+    <string name="system_info_verdict_tone_map">仅确认 libmpv 处理能力</string>
+    <string name="system_info_verdict_tone_map_desc">未同时确认显示、解码器和直通条件，当前可能由 libmpv / gpu-next 做色彩转换或 tone mapping。</string>
+    <string name="system_info_hdr_note">这里只展示系统公开能力，不等同于 Dolby Vision 或 HDR10+ 认证。最终直通结果还取决于设备固件、容器、视频 Profile、片源元数据和应用是否采用原生 MediaCodec Surface 链路。</string>
 </resources>

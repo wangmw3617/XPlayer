@@ -3,6 +3,7 @@ package com.zhiwei.xplayer.ui.player
 import android.content.res.Resources
 import android.app.Activity
 import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
@@ -10,6 +11,7 @@ import android.util.Rational
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
@@ -26,8 +28,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -38,15 +42,17 @@ import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.outlined.AspectRatio
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Loop
 import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.PictureInPictureAlt
+import androidx.compose.material.icons.outlined.ScreenRotation
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.Subtitles
 import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -63,10 +69,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -81,12 +89,15 @@ import com.zhiwei.xplayer.core.mpv.MpvTrack
 import com.zhiwei.xplayer.core.mpv.PlayerState
 import com.zhiwei.xplayer.core.util.Formatters
 import com.zhiwei.xplayer.ui.PendingPlayback
+import com.zhiwei.xplayer.ui.components.AUDIO_MIME_TYPES
 import com.zhiwei.xplayer.ui.components.rememberResources
 import com.zhiwei.xplayer.ui.components.SUBTITLE_MIME_TYPES
 import com.zhiwei.xplayer.ui.components.findActivity
+import com.zhiwei.xplayer.ui.components.rememberAudioPicker
 import com.zhiwei.xplayer.ui.components.rememberSubtitlePicker
 import com.zhiwei.xplayer.ui.theme.playerGlass
 import com.zhiwei.xplayer.ui.vm.PlayerViewModel
+import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.abs
@@ -95,9 +106,10 @@ import kotlin.math.roundToInt
 private const val DRAG_SLOP = 22f
 private const val SEEK_THROTTLE_MS = 120L
 private const val HINT_DURATION_MS = 900L
+private const val DOUBLE_TAP_SEEK_MS = 10_000L
 
 /** 手势类型 */
-private enum class DragMode { NONE, SEEK, BRIGHTNESS, VOLUME }
+private enum class DragMode { NONE, SEEK, BRIGHTNESS, VOLUME, IGNORED }
 
 /** 画面比例选项 */
 private data class AspectOption(val label: String, val value: String)
@@ -112,6 +124,7 @@ fun PlayerScreen(
     val activity = remember(context) { context.findActivity() }
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val queue by viewModel.queueState.collectAsStateWithLifecycle()
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     DisposableEffect(activity) {
         onDispose { disableAutoEnterPip(activity) }
@@ -136,6 +149,7 @@ fun PlayerScreen(
 
     var controlsVisible by remember { mutableStateOf(true) }
     var sheet by remember { mutableStateOf<PlayerSheet?>(null) }
+    var showPlaybackInfo by remember { mutableStateOf(false) }
     var hint by remember { mutableStateOf<String?>(null) }
     var zoom by remember { mutableFloatStateOf(1f) }
     var aspect by remember { mutableStateOf(ASPECT_DEFAULT) }
@@ -242,6 +256,9 @@ fun PlayerScreen(
     val subtitlePicker = rememberSubtitlePicker { uri ->
         viewModel.player.addSubtitle(uri.toString())
     }
+    val audioPicker = rememberAudioPicker { uri ->
+        viewModel.player.addAudio(uri.toString())
+    }
 
     BackHandler {
         if (!settings.backgroundPlayback) viewModel.stopPlayback()
@@ -262,17 +279,30 @@ fun PlayerScreen(
 
         // ② 手势层。写在控制层之前，控制层里的按钮才会优先拿到点击。
         //
-        // 这里只用 onPress / onLongPress / onTap，刻意不用 onDoubleTap。
-        // 原因：detectTapGestures 一旦注册了 onDoubleTap，每次单击都必须等
-        // 双击判定超时（约 300ms）才会回调 onTap —— 落在空白处的「轻点切换控制层」
-        // 会有肉眼可见的延迟，而按钮附近的点击更容易被这段等待窗口吃掉，
-        // 表现就是「点播放没反应」。
+        // 双击跳转默认开启；关闭后不注册 onDoubleTap，单击切换控制层可以立即响应。
+        // 控制按钮位于这一层之上，仍会优先消费自己的点击。
         Box(
             Modifier
                 .fillMaxSize()
-                .pointerInput(longPressSpeed) {
+                .pointerInput(longPressSpeed, settings.doubleTapSeekEnabled) {
                     detectTapGestures(
                         onTap = { controlsVisible = !controlsVisible },
+                        onDoubleTap = if (settings.doubleTapSeekEnabled) {
+                            { position ->
+                                val state = gestureSource.value
+                                if (state.hasMedia && state.seekable) {
+                                    val backward = position.x < size.width / 2f
+                                    val delta = if (backward) -DOUBLE_TAP_SEEK_MS else DOUBLE_TAP_SEEK_MS
+                                    viewModel.player.seekBy(delta)
+                                    hint = resources.getString(
+                                        if (backward) R.string.player_seek_back else R.string.player_seek_forward,
+                                        10,
+                                    )
+                                }
+                            }
+                        } else {
+                            null
+                        },
                         onLongPress = {
                             speedBeforeBoost = gestureSource.value.speed
                             viewModel.player.setSpeed(longPressSpeed)
@@ -291,7 +321,12 @@ fun PlayerScreen(
                         },
                     )
                 }
-                .pointerInput(Unit) {
+                .pointerInput(
+                    seekStepSeconds,
+                    settings.seekGestureEnabled,
+                    settings.brightnessGestureEnabled,
+                    settings.volumeGestureEnabled,
+                ) {
                     var mode = DragMode.NONE
                     var total = Offset.Zero
                     var startPosition = 0L
@@ -316,10 +351,19 @@ fun PlayerScreen(
                                 return@detectTransformGestures
                             }
                             mode = when {
-                                abs(total.x) >= abs(total.y) -> DragMode.SEEK
-                                centroid.x < size.width / 2f -> DragMode.BRIGHTNESS
-                                else -> DragMode.VOLUME
+                                abs(total.x) >= abs(total.y) &&
+                                    settings.seekGestureEnabled &&
+                                    gestureSource.value.hasMedia &&
+                                    gestureSource.value.seekable -> DragMode.SEEK
+                                abs(total.y) > abs(total.x) &&
+                                    centroid.x < size.width / 2f &&
+                                    settings.brightnessGestureEnabled -> DragMode.BRIGHTNESS
+                                abs(total.y) > abs(total.x) &&
+                                    centroid.x >= size.width / 2f &&
+                                    settings.volumeGestureEnabled -> DragMode.VOLUME
+                                else -> DragMode.IGNORED
                             }
+                            if (mode == DragMode.IGNORED) return@detectTransformGestures
                             startPosition = gestureSource.value.positionMs
                             brightness = readBrightness(activity)
                             volume = gestureSource.value.volume.toFloat()
@@ -359,6 +403,7 @@ fun PlayerScreen(
                             }
 
                             DragMode.NONE -> Unit
+                            DragMode.IGNORED -> Unit
                         }
                     }
                 },
@@ -403,11 +448,12 @@ fun PlayerScreen(
                 hasMedia = { player.hasMedia },
                 positionMs = { player.positionMs },
                 durationMs = { player.durationMs },
+                seekable = { player.seekable },
                 paused = { player.paused },
                 speed = { player.speed },
                 loopMode = { player.loopMode },
-                canPrevious = queue.hasPrevious,
-                canNext = queue.hasNext,
+                canPrevious = queue.hasPrevious || player.canMpvPlaylistPrevious,
+                canNext = queue.hasNext || player.canMpvPlaylistNext,
                 onTogglePlay = viewModel::togglePlayPause,
                 onPrevious = viewModel::previous,
                 onNext = viewModel::next,
@@ -415,8 +461,16 @@ fun PlayerScreen(
                 onSeekTo = { position -> viewModel.player.seekTo(position) },
                 onOpenSheet = { sheet = it },
                 onScreenshot = viewModel::screenshot,
+                onShowPlaybackInfo = { showPlaybackInfo = true },
                 // 画中画的比例要的是**当前**分辨率，用原始快照而不是量化过的显示值
                 onEnterPip = { enterPip(activity, viewModel.player.state.value) },
+                onToggleOrientation = {
+                    activity?.requestedOrientation = if (isLandscape) {
+                        ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                    } else {
+                        ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    }
+                },
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
@@ -433,8 +487,17 @@ fun PlayerScreen(
             currentAspect = aspect,
             onAspectChange = { aspect = it },
             onLoadSubtitle = { subtitlePicker.launch(SUBTITLE_MIME_TYPES) },
+            onLoadAudio = { audioPicker.launch(AUDIO_MIME_TYPES) },
             onLoopModeChange = viewModel::setLoopMode,
+            onOpenSheet = { sheet = it },
             onDismiss = { sheet = null },
+        )
+    }
+
+    if (showPlaybackInfo) {
+        PlaybackInfoSheet(
+            player = viewModel.player,
+            onDismiss = { showPlaybackInfo = false },
         )
     }
 }
@@ -452,7 +515,9 @@ private fun PlayerOptionsSheet(
     currentAspect: String,
     onAspectChange: (String) -> Unit,
     onLoadSubtitle: () -> Unit,
+    onLoadAudio: () -> Unit,
     onLoopModeChange: (Int) -> Unit,
+    onOpenSheet: (PlayerSheet) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val snapshot by state.collectAsStateWithLifecycle()
@@ -466,7 +531,9 @@ private fun PlayerOptionsSheet(
             currentAspect = currentAspect,
             onAspectChange = onAspectChange,
             onLoadSubtitle = onLoadSubtitle,
+            onLoadAudio = onLoadAudio,
             onLoopModeChange = onLoopModeChange,
+            onOpenSheet = onOpenSheet,
             onDismiss = onDismiss,
         ),
         onDismiss = onDismiss,
@@ -547,6 +614,7 @@ private fun PlayerTopBar(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val resources = rememberResources()
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -556,13 +624,11 @@ private fun PlayerTopBar(
             .padding(horizontal = 6.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onBack) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "返回",
-                tint = Color.White,
-            )
-        }
+        PlayerIconButton(
+            icon = Icons.AutoMirrored.Filled.ArrowBack,
+            label = resources.getString(R.string.action_back),
+            onClick = onBack,
+        )
         Column(Modifier.weight(1f)) {
             Text(
                 text = title(),
@@ -621,6 +687,7 @@ private fun PlayerControlPanel(
     hasMedia: () -> Boolean,
     positionMs: () -> Long,
     durationMs: () -> Long,
+    seekable: () -> Boolean,
     paused: () -> Boolean,
     speed: () -> Float,
     loopMode: () -> Int,
@@ -633,7 +700,9 @@ private fun PlayerControlPanel(
     onSeekTo: (Long) -> Unit,
     onOpenSheet: (PlayerSheet) -> Unit,
     onScreenshot: () -> Unit,
+    onShowPlaybackInfo: () -> Unit,
     onEnterPip: () -> Unit,
+    onToggleOrientation: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -641,6 +710,7 @@ private fun PlayerControlPanel(
 
     Column(
         modifier = modifier
+            .widthIn(max = 920.dp)
             .fillMaxWidth()
             .windowInsetsPadding(WindowInsets.navigationBars)
             .padding(horizontal = 12.dp, vertical = 10.dp)
@@ -651,6 +721,7 @@ private fun PlayerControlPanel(
         ProgressRow(
             positionMs = positionMs,
             durationMs = durationMs,
+            seekable = seekable,
             onSeekTo = onSeekTo,
         )
 
@@ -659,6 +730,7 @@ private fun PlayerControlPanel(
         TransportRow(
             paused = paused,
             enabled = hasMedia,
+            seekable = seekable,
             canPrevious = canPrevious,
             canNext = canNext,
             onTogglePlay = onTogglePlay,
@@ -673,7 +745,9 @@ private fun PlayerControlPanel(
             loopMode = loopMode,
             onOpenSheet = onOpenSheet,
             onScreenshot = onScreenshot,
+            onShowPlaybackInfo = onShowPlaybackInfo,
             onEnterPip = onEnterPip,
+            onToggleOrientation = onToggleOrientation,
         )
     }
 }
@@ -683,15 +757,22 @@ private fun PlayerControlPanel(
 private fun ProgressRow(
     positionMs: () -> Long,
     durationMs: () -> Long,
+    seekable: () -> Boolean,
     onSeekTo: (Long) -> Unit,
 ) {
     // 拖动期间不能让 time-pos 把滑块拽回去，所以本地先接管
     var scrubbing by remember { mutableStateOf(false) }
     var scrubValue by remember { mutableFloatStateOf(0f) }
 
-    val duration = durationMs().coerceAtLeast(1L)
+    val resources = rememberResources()
+    val reportedDuration = durationMs()
+    val hasKnownDuration = reportedDuration > 0L
+    val canSeek = hasKnownDuration && seekable()
+    val duration = reportedDuration.coerceAtLeast(1L)
     val shownPosition = if (scrubbing) (scrubValue * duration).toLong() else positionMs()
-    val sliderValue = if (scrubbing) {
+    val sliderValue = if (!hasKnownDuration) {
+        0f
+    } else if (scrubbing) {
         scrubValue
     } else {
         (positionMs().toFloat() / duration.toFloat()).coerceIn(0f, 1f)
@@ -716,6 +797,7 @@ private fun ProgressRow(
             modifier = Modifier
                 .weight(1f)
                 .padding(horizontal = 10.dp),
+            enabled = canSeek,
             colors = SliderDefaults.colors(
                 thumbColor = Color.White,
                 activeTrackColor = Color.White,
@@ -723,7 +805,11 @@ private fun ProgressRow(
             ),
         )
         Text(
-            text = Formatters.duration(durationMs()),
+            text = if (hasKnownDuration) {
+                Formatters.duration(reportedDuration)
+            } else {
+                resources.getString(R.string.player_live)
+            },
             color = Color.White.copy(alpha = 0.8f),
             style = MaterialTheme.typography.labelSmall,
         )
@@ -735,6 +821,7 @@ private fun ProgressRow(
 private fun TransportRow(
     paused: () -> Boolean,
     enabled: () -> Boolean,
+    seekable: () -> Boolean,
     canPrevious: Boolean,
     canNext: Boolean,
     onTogglePlay: () -> Unit,
@@ -749,20 +836,36 @@ private fun TransportRow(
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onPrevious, enabled = enabled() && canPrevious) {
-            Icon(Icons.Filled.SkipPrevious, contentDescription = resources.getString(R.string.player_prev), tint = Color.White)
-        }
-        IconButton(onClick = { onSeekBy(-DEFAULT_SEEK_STEP_MS) }, enabled = enabled()) {
-            Icon(Icons.Filled.Replay10, contentDescription = resources.getString(R.string.player_seek_back, 10), tint = Color.White)
-        }
+        PlayerIconButton(
+            icon = Icons.Filled.SkipPrevious,
+            label = resources.getString(R.string.player_prev),
+            onClick = onPrevious,
+            enabled = enabled() && canPrevious,
+        )
+        PlayerIconButton(
+            icon = Icons.Filled.Replay10,
+            label = resources.getString(R.string.player_seek_back, 10),
+            onClick = { onSeekBy(-DEFAULT_SEEK_STEP_MS) },
+            enabled = enabled() && seekable(),
+        )
         // 播放/暂停是最高频操作，单独包一层：只有 paused 真正翻转时才重组图标。
-        PlayPauseButton(paused = paused, onTogglePlay = onTogglePlay)
-        IconButton(onClick = { onSeekBy(DEFAULT_SEEK_STEP_MS) }, enabled = enabled()) {
-            Icon(Icons.Filled.Forward10, contentDescription = resources.getString(R.string.player_seek_forward, 10), tint = Color.White)
-        }
-        IconButton(onClick = onNext, enabled = enabled() && canNext) {
-            Icon(Icons.Filled.SkipNext, contentDescription = resources.getString(R.string.player_next), tint = Color.White)
-        }
+        PlayPauseButton(
+            paused = paused,
+            enabled = enabled(),
+            onTogglePlay = onTogglePlay,
+        )
+        PlayerIconButton(
+            icon = Icons.Filled.Forward10,
+            label = resources.getString(R.string.player_seek_forward, 10),
+            onClick = { onSeekBy(DEFAULT_SEEK_STEP_MS) },
+            enabled = enabled() && seekable(),
+        )
+        PlayerIconButton(
+            icon = Icons.Filled.SkipNext,
+            label = resources.getString(R.string.player_next),
+            onClick = onNext,
+            enabled = enabled() && canNext,
+        )
     }
 }
 
@@ -777,18 +880,20 @@ private fun TransportRow(
  * 读在这里、失效也精确到这里。
  */
 @Composable
-private fun PlayPauseButton(paused: () -> Boolean, onTogglePlay: () -> Unit) {
-    val context = LocalContext.current
+private fun PlayPauseButton(
+    paused: () -> Boolean,
+    enabled: Boolean,
+    onTogglePlay: () -> Unit,
+) {
     val resources = rememberResources()
     val isPaused = paused()
-    FilledIconButton(onClick = onTogglePlay) {
-        Icon(
-            imageVector = if (isPaused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
-            contentDescription = resources.getString(
-                if (isPaused) R.string.player_play else R.string.player_pause,
-            ),
-        )
-    }
+    PlayerIconButton(
+        icon = if (isPaused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+        label = resources.getString(if (isPaused) R.string.player_play else R.string.player_pause),
+        onClick = onTogglePlay,
+        enabled = enabled,
+        emphasized = true,
+    )
 }
 
 /** 倍速 / 音轨 / 字幕 / 比例 / 循环 / 截图 / 画中画 */
@@ -798,7 +903,9 @@ private fun FeatureRow(
     loopMode: () -> Int,
     onOpenSheet: (PlayerSheet) -> Unit,
     onScreenshot: () -> Unit,
+    onShowPlaybackInfo: () -> Unit,
     onEnterPip: () -> Unit,
+    onToggleOrientation: () -> Unit,
 ) {
     val resources = rememberResources()
     Row(
@@ -808,6 +915,10 @@ private fun FeatureRow(
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        ControlIcon(Icons.Outlined.Tune, resources.getString(R.string.player_tools)) {
+            onOpenSheet(PlayerSheet.TOOLS)
+        }
+        ControlIcon(Icons.Outlined.Info, resources.getString(R.string.player_playback_info), onShowPlaybackInfo)
         ControlIcon(Icons.Outlined.Speed, Formatters.speed(speed())) {
             onOpenSheet(PlayerSheet.SPEED)
         }
@@ -820,6 +931,11 @@ private fun FeatureRow(
         ControlIcon(Icons.Outlined.AspectRatio, resources.getString(R.string.player_aspect)) {
             onOpenSheet(PlayerSheet.ASPECT)
         }
+        ControlIcon(
+            Icons.Outlined.ScreenRotation,
+            resources.getString(R.string.player_orientation),
+            onToggleOrientation,
+        )
         ControlIcon(Icons.Outlined.Loop, resources.getString(loopLabelRes(loopMode()))) {
             onOpenSheet(PlayerSheet.LOOP)
         }
@@ -837,9 +953,7 @@ private fun ControlIcon(icon: ImageVector, label: String, onClick: () -> Unit) {
         modifier = Modifier.width(64.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        IconButton(onClick = onClick) {
-            Icon(icon, contentDescription = label, tint = Color.White)
-        }
+        PlayerIconButton(icon = icon, label = label, onClick = onClick)
         Text(
             text = label,
             color = Color.White.copy(alpha = 0.85f),
@@ -847,6 +961,46 @@ private fun ControlIcon(icon: ImageVector, label: String, onClick: () -> Unit) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+    }
+}
+
+@Composable
+private fun PlayerIconButton(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    emphasized: Boolean = false,
+) {
+    val buttonSize = if (emphasized) 60.dp else 48.dp
+    val iconSize = if (emphasized) 30.dp else 24.dp
+    val fillAlpha = when {
+        !enabled -> 0.03f
+        emphasized -> 0.11f
+        else -> 0.07f
+    }
+    val borderAlpha = if (enabled) 0.20f else 0.08f
+    val contentAlpha = if (enabled) 1f else 0.38f
+    Box(
+        modifier = Modifier
+            .size(buttonSize)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = fillAlpha))
+            .border(0.5.dp, Color.White.copy(alpha = borderAlpha), CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        IconButton(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = Color.White.copy(alpha = contentAlpha),
+                modifier = Modifier.size(iconSize),
+            )
+        }
     }
 }
 
@@ -903,6 +1057,7 @@ private fun disableAutoEnterPip(activity: Activity?) {
 }
 
 private fun sheetTitle(resources: Resources, kind: PlayerSheet): String = when (kind) {
+    PlayerSheet.TOOLS -> resources.getString(R.string.player_tools)
     PlayerSheet.SPEED -> resources.getString(R.string.player_speed)
     PlayerSheet.AUDIO_TRACK -> resources.getString(R.string.player_audio_track)
     PlayerSheet.VIDEO_TRACK -> resources.getString(R.string.player_video_track)
@@ -911,6 +1066,13 @@ private fun sheetTitle(resources: Resources, kind: PlayerSheet): String = when (
     PlayerSheet.LOOP -> resources.getString(R.string.player_loop)
     PlayerSheet.SUBTITLE_DELAY -> resources.getString(R.string.player_sub_delay)
     PlayerSheet.AUDIO_DELAY -> resources.getString(R.string.player_audio_delay)
+    PlayerSheet.ROTATION -> "画面旋转"
+    PlayerSheet.CHAPTER -> "章节"
+    PlayerSheet.EDITION -> "文件版本"
+    PlayerSheet.PLAYLIST -> "mpv 播放列表"
+    PlayerSheet.AB_LOOP -> "A-B 循环"
+    PlayerSheet.SUBTITLE_STYLE -> "字幕样式"
+    PlayerSheet.VIDEO_ENHANCE -> "画面增强"
 }
 
 private fun sheetOptions(
@@ -920,9 +1082,145 @@ private fun sheetOptions(
     currentAspect: String,
     onAspectChange: (String) -> Unit,
     onLoadSubtitle: () -> Unit,
+    onLoadAudio: () -> Unit,
     onLoopModeChange: (Int) -> Unit,
+    onOpenSheet: (PlayerSheet) -> Unit,
     onDismiss: () -> Unit,
 ): List<SheetOption> = when (kind) {
+    PlayerSheet.TOOLS -> {
+        val currentChapter = state.chapters.getOrNull(state.currentChapter)
+        val currentEdition = state.editions.getOrNull(state.currentEdition)
+        buildList {
+            add(
+                SheetOption(
+                    label = "视频轨道",
+                    detail = "${state.videoTracks.size} 条",
+                    enabled = state.videoTracks.isNotEmpty(),
+                    onClick = {
+                        onDismiss()
+                        onOpenSheet(PlayerSheet.VIDEO_TRACK)
+                    },
+                ),
+            )
+            add(
+                SheetOption(
+                    label = "加载外部音轨…",
+                    onClick = {
+                        onDismiss()
+                        onLoadAudio()
+                    },
+                ),
+            )
+            add(
+                SheetOption(
+                    label = "音频延迟",
+                    detail = Formatters.delay(state.audioDelay),
+                    onClick = {
+                        onDismiss()
+                        onOpenSheet(PlayerSheet.AUDIO_DELAY)
+                    },
+                ),
+            )
+            add(
+                SheetOption(
+                    label = "画面旋转",
+                    detail = "${state.videoRotate}°",
+                    onClick = {
+                        onDismiss()
+                        onOpenSheet(PlayerSheet.ROTATION)
+                    },
+                ),
+            )
+            add(
+                SheetOption(
+                    label = "章节",
+                    detail = currentChapter?.displayName ?: "当前文件没有章节",
+                    enabled = state.chapters.isNotEmpty(),
+                    onClick = {
+                        onDismiss()
+                        onOpenSheet(PlayerSheet.CHAPTER)
+                    },
+                ),
+            )
+            add(
+                SheetOption(
+                    label = "文件版本",
+                    detail = currentEdition?.displayName ?: "当前文件没有多版本信息",
+                    enabled = state.editions.isNotEmpty(),
+                    onClick = {
+                        onDismiss()
+                        onOpenSheet(PlayerSheet.EDITION)
+                    },
+                ),
+            )
+            add(
+                SheetOption(
+                    label = "mpv 播放列表",
+                    detail = "${state.playlistCount} 项",
+                    enabled = state.playlistCount > 1,
+                    onClick = {
+                        onDismiss()
+                        onOpenSheet(PlayerSheet.PLAYLIST)
+                    },
+                ),
+            )
+            add(
+                SheetOption(
+                    label = "A-B 循环",
+                    detail = abLoopSummary(state),
+                    onClick = {
+                        onDismiss()
+                        onOpenSheet(PlayerSheet.AB_LOOP)
+                    },
+                ),
+            )
+            add(
+                SheetOption(
+                    label = "字幕样式",
+                    detail = "字号 ${"%.1f".format(Locale.US, state.subtitleScale)}x",
+                    onClick = {
+                        onDismiss()
+                        onOpenSheet(PlayerSheet.SUBTITLE_STYLE)
+                    },
+                ),
+            )
+            add(
+                SheetOption(
+                    label = "画面增强",
+                    detail = "反交错 ${state.deinterlace} · HDR ${state.toneMapping}",
+                    onClick = {
+                        onDismiss()
+                        onOpenSheet(PlayerSheet.VIDEO_ENHANCE)
+                    },
+                ),
+            )
+            add(
+                SheetOption(
+                    label = if (state.muted) "取消静音" else "静音",
+                    detail = "音量 ${state.volume}%",
+                    onClick = {
+                        player.toggleMute()
+                        onDismiss()
+                    },
+                ),
+            )
+            add(
+                SheetOption(
+                    label = "上一帧",
+                    detail = "暂停后逐帧检查",
+                    onClick = { player.stepFrame(false) },
+                ),
+            )
+            add(
+                SheetOption(
+                    label = "下一帧",
+                    detail = "暂停后逐帧检查",
+                    onClick = { player.stepFrame(true) },
+                ),
+            )
+        }
+    }
+
     PlayerSheet.SPEED -> SPEED_VALUES.map { value ->
         SheetOption(
             label = Formatters.speed(value),
@@ -934,15 +1232,28 @@ private fun sheetOptions(
         )
     }
 
-    PlayerSheet.AUDIO_TRACK -> trackOptions(
-        tracks = state.audioTracks,
-        selectedId = state.audioTrackId,
-        offLabel = "关闭",
-        onSelect = { id ->
-            player.setAudioTrack(id)
-            onDismiss()
-        },
-    )
+    PlayerSheet.AUDIO_TRACK -> buildList {
+        addAll(
+            trackOptions(
+                tracks = state.audioTracks,
+                selectedId = state.audioTrackId,
+                offLabel = "关闭",
+                onSelect = { id ->
+                    player.setAudioTrack(id)
+                    onDismiss()
+                },
+            ),
+        )
+        add(
+            SheetOption(
+                label = "加载外部音轨…",
+                onClick = {
+                    onDismiss()
+                    onLoadAudio()
+                },
+            ),
+        )
+    }
 
     PlayerSheet.VIDEO_TRACK -> trackOptions(
         tracks = state.videoTracks,
@@ -1025,7 +1336,148 @@ private fun sheetOptions(
             },
         )
     }
+
+    PlayerSheet.ROTATION -> listOf(0, 90, 180, 270).map { degrees ->
+        SheetOption(
+            label = "$degrees°",
+            selected = state.videoRotate == degrees,
+            onClick = {
+                player.setRotation(degrees)
+                onDismiss()
+            },
+        )
+    }
+
+    PlayerSheet.CHAPTER -> state.chapters.map { chapter ->
+        SheetOption(
+            label = chapter.displayName,
+            detail = Formatters.position(chapter.timeMs),
+            selected = state.currentChapter == chapter.index,
+            onClick = {
+                player.setChapter(chapter.index)
+                onDismiss()
+            },
+        )
+    }
+
+    PlayerSheet.EDITION -> state.editions.map { edition ->
+        SheetOption(
+            label = edition.displayName,
+            detail = if (edition.isDefault) "默认版本" else null,
+            selected = state.currentEdition == edition.index,
+            onClick = {
+                player.setEdition(edition.index)
+                onDismiss()
+            },
+        )
+    }
+
+    PlayerSheet.PLAYLIST -> state.playlistItems.map { item ->
+        SheetOption(
+            label = item.displayName,
+            detail = item.filename?.takeIf { it != item.displayName },
+            selected = item.isPlaying,
+            onClick = {
+                player.playPlaylistIndex(item.index)
+                onDismiss()
+            },
+        )
+    }
+
+    PlayerSheet.AB_LOOP -> listOf(
+        SheetOption(
+            label = "把当前位置设为 A",
+            detail = "A：${state.abLoopA?.let(::secondsLabel) ?: "未设置"}",
+            onClick = { player.setAbLoopA(state.positionMs) },
+        ),
+        SheetOption(
+            label = "把当前位置设为 B",
+            detail = "B：${state.abLoopB?.let(::secondsLabel) ?: "未设置"}",
+            onClick = { player.setAbLoopB(state.positionMs) },
+        ),
+        SheetOption(
+            label = "跳到 A",
+            enabled = state.abLoopA != null,
+            onClick = { state.abLoopA?.let { player.seekTo((it * 1000.0).toLong()) } },
+        ),
+        SheetOption(
+            label = "跳到 B",
+            enabled = state.abLoopB != null,
+            onClick = { state.abLoopB?.let { player.seekTo((it * 1000.0).toLong()) } },
+        ),
+        SheetOption(
+            label = "清除 A-B 循环",
+            enabled = state.abLoopA != null || state.abLoopB != null,
+            onClick = { player.clearAbLoop() },
+        ),
+    )
+
+    PlayerSheet.SUBTITLE_STYLE -> buildList {
+        listOf(0.8f to "小", 1f to "标准", 1.2f to "大", 1.5f to "特大").forEach { (scale, name) ->
+            add(
+                SheetOption(
+                    label = "字号：$name",
+                    detail = "${"%.1f".format(Locale.US, scale)}x",
+                    selected = abs(state.subtitleScale - scale) < 0.01f,
+                    onClick = { player.setSubtitleScale(scale) },
+                ),
+            )
+        }
+        listOf(100 to "底部", 86 to "偏下", 72 to "居中").forEach { (position, name) ->
+            add(
+                SheetOption(
+                    label = "位置：$name",
+                    detail = "sub-pos $position",
+                    selected = state.subtitlePosition == position,
+                    onClick = { player.setSubtitlePosition(position) },
+                ),
+            )
+        }
+    }
+
+    PlayerSheet.VIDEO_ENHANCE -> buildList {
+        listOf(
+            "auto" to "自动",
+            "yes" to "开启",
+            "no" to "关闭",
+        ).forEach { (value, label) ->
+            add(
+                SheetOption(
+                    label = "反交错：$label",
+                    detail = value,
+                    selected = state.deinterlace.equals(value, ignoreCase = true),
+                    onClick = { player.setDeinterlace(value) },
+                ),
+            )
+        }
+        listOf(
+            "auto" to "自动",
+            "bt.2390" to "BT.2390",
+            "spline" to "Spline",
+            "hable" to "Hable",
+            "reinhard" to "Reinhard",
+            "mobius" to "Mobius",
+        ).forEach { (value, label) ->
+            add(
+                SheetOption(
+                    label = "HDR 映射：$label",
+                    detail = value,
+                    selected = state.toneMapping.equals(value, ignoreCase = true),
+                    onClick = { player.setToneMapping(value) },
+                ),
+            )
+        }
+    }
 }
+
+private fun abLoopSummary(state: PlayerState): String {
+    val a = state.abLoopA?.let(::secondsLabel) ?: "--"
+    val b = state.abLoopB?.let(::secondsLabel) ?: "--"
+    return "$a → $b"
+}
+
+private fun secondsLabel(seconds: Double): String =
+    Formatters.position((seconds * 1000.0).toLong())
 
 private fun trackOptions(
     tracks: List<MpvTrack>,

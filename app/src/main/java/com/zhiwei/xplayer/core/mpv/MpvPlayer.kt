@@ -286,6 +286,13 @@ class MpvPlayer @Inject constructor(
                 positionMs = 0L,
                 durationMs = 0L,
                 tracks = emptyList(),
+                chapters = emptyList(),
+                currentChapter = -1,
+                editions = emptyList(),
+                currentEdition = -1,
+                playlistItems = emptyList(),
+                abLoopA = null,
+                abLoopB = null,
                 mediaTitle = source.title,
                 // 乐观置 false：loadfile 到 FILE_LOADED 之间 mpv 仍报 idle-active=true，
                 // 前台服务会据此判定「播放已结束」并把刚发出去的 loadfile 停掉。
@@ -399,6 +406,11 @@ class MpvPlayer @Inject constructor(
         runCatching { mpv?.command(arrayOf("sub-add", uri, "select")) }
     }
 
+    fun addAudio(uri: String) {
+        if (!initialized) return
+        runCatching { mpv?.command(arrayOf("audio-add", uri, "select")) }
+    }
+
     fun setSubtitleDelay(seconds: Double) {
         if (!initialized) return
         runCatching { mpv?.setPropertyDouble("sub-delay", seconds) }
@@ -418,6 +430,76 @@ class MpvPlayer @Inject constructor(
     fun setRotation(degrees: Int) {
         if (!initialized) return
         runCatching { mpv?.setPropertyInt("video-rotate", ((degrees % 360) + 360) % 360) }
+    }
+
+    fun setChapter(index: Int) {
+        if (!initialized || index < 0) return
+        runCatching { mpv?.setPropertyInt("chapter", index) }
+    }
+
+    fun setEdition(index: Int) {
+        if (!initialized || index < 0) return
+        runCatching { mpv?.setPropertyInt("edition", index) }
+    }
+
+    fun playPlaylistIndex(index: Int) {
+        if (!initialized || index < 0) return
+        runCatching { mpv?.command(arrayOf("playlist-play-index", index.toString())) }
+    }
+
+    fun setAbLoopA(positionMs: Long) {
+        if (!initialized) return
+        runCatching {
+            mpv?.setPropertyString("ab-loop-a", (positionMs.coerceAtLeast(0L) / 1000.0).toString())
+        }
+    }
+
+    fun setAbLoopB(positionMs: Long) {
+        if (!initialized) return
+        runCatching {
+            mpv?.setPropertyString("ab-loop-b", (positionMs.coerceAtLeast(0L) / 1000.0).toString())
+        }
+    }
+
+    fun clearAbLoop() {
+        if (!initialized) return
+        runCatching {
+            mpv?.setPropertyString("ab-loop-a", "no")
+            mpv?.setPropertyString("ab-loop-b", "no")
+        }
+    }
+
+    /** 单步播放。mpv 会在执行后保持暂停。 */
+    fun stepFrame(forward: Boolean) {
+        if (!initialized) return
+        runCatching {
+            mpv?.command(arrayOf(if (forward) "frame-step" else "frame-back-step"))
+        }
+    }
+
+    fun setSubtitleScale(scale: Float) {
+        if (!initialized) return
+        runCatching {
+            mpv?.setPropertyDouble("sub-scale", scale.coerceIn(0.5f, 2.5f).toDouble())
+        }
+    }
+
+    fun setSubtitlePosition(position: Int) {
+        if (!initialized) return
+        runCatching {
+            mpv?.setPropertyInt("sub-pos", position.coerceIn(0, 150))
+        }
+    }
+
+    /** [value] 使用 mpv 的 auto / yes / no。 */
+    fun setDeinterlace(value: String) {
+        if (!initialized) return
+        runCatching { mpv?.setPropertyString("deinterlace", value) }
+    }
+
+    fun setToneMapping(value: String) {
+        if (!initialized) return
+        runCatching { mpv?.setPropertyString("tone-mapping", value) }
     }
 
     /**
@@ -448,6 +530,8 @@ class MpvPlayer @Inject constructor(
             mpv?.setPropertyString("video-aspect-override", "no")
             mpv?.setPropertyDouble("sub-delay", 0.0)
             mpv?.setPropertyDouble("audio-delay", 0.0)
+            mpv?.setPropertyString("ab-loop-a", "no")
+            mpv?.setPropertyString("ab-loop-b", "no")
             // http-header-fields 也是全局运行时属性，不清掉的话上一个源
             // （比如带 Basic 认证的 WebDAV）的 Authorization 头会跟着发给
             // 下一个源 —— 既是凭据外泄，也会让无关的请求带上不该有的头。
@@ -497,6 +581,117 @@ class MpvPlayer @Inject constructor(
         }.getOrNull()
     }
 
+    /**
+     * 读取 PotPlayer 风格播放信息所需的原始属性快照。
+     *
+     * 这个接口只应在信息面板打开时调用，并按较低频率刷新，避免常驻读取几十个
+     * mpv 属性。所有属性都允许当前文件不支持，因此不支持的项统一显示“不可用”。
+     */
+    fun playbackInfoSnapshot(): List<PlaybackInfoSection> {
+        if (!initialized) return emptyList()
+        fun section(title: String, properties: List<Pair<String, String>>) =
+            PlaybackInfoSection(
+                title = title,
+                rows = properties.map { (key, label) ->
+                    PlaybackInfoRow(
+                        key = key,
+                        label = label,
+                        value = readPropertyDisplayValue(key),
+                    )
+                },
+            )
+
+        return listOf(
+            section(
+                "媒体",
+                listOf(
+                    "filename" to "文件",
+                    "media-title" to "标题",
+                    "file-format" to "容器",
+                    "file-size" to "大小",
+                    "duration" to "时长",
+                    "seekable" to "可跳转",
+                    "percent-pos" to "进度",
+                ),
+            ),
+            section(
+                "视频",
+                listOf(
+                    "video-codec" to "编码",
+                    "video-params/w" to "宽度",
+                    "video-params/h" to "高度",
+                    "video-params/pixelformat" to "像素格式",
+                    "video-params/colormatrix" to "色彩矩阵",
+                    "video-params/primaries" to "色彩原色",
+                    "video-params/gamma" to "传递函数",
+                    "video-params/sig-peak" to "峰值亮度",
+                    "container-fps" to "容器帧率",
+                    "estimated-vf-fps" to "输出帧率",
+                    "hwdec-current" to "当前硬解",
+                    "hwdec-interop" to "硬解互操作",
+                    "video-bitrate" to "码率",
+                    "video-zoom" to "缩放",
+                    "video-rotate" to "旋转",
+                    "deinterlace" to "反交错",
+                    "tone-mapping" to "HDR 映射",
+                ),
+            ),
+            section(
+                "音频",
+                listOf(
+                    "audio-codec-name" to "编码",
+                    "audio-params/channel-count" to "声道数",
+                    "audio-params/samplerate" to "采样率",
+                    "audio-params/format" to "采样格式",
+                    "audio-bitrate" to "码率",
+                    "audio-device" to "输出设备",
+                    "audio-delay" to "延迟",
+                    "volume" to "音量",
+                    "mute" to "静音",
+                ),
+            ),
+            section(
+                "播放与缓存",
+                listOf(
+                    "time-pos" to "当前位置",
+                    "speed" to "倍速",
+                    "pause" to "暂停",
+                    "seeking" to "跳转中",
+                    "paused-for-cache" to "缓存暂停",
+                    "cache-buffering-state" to "缓存进度",
+                    "cache-speed" to "缓存速度",
+                    "demuxer-cache-time" to "已缓存时长",
+                    "demuxer-cache-idle" to "解复用空闲",
+                    "avsync" to "音画同步",
+                    "display-fps" to "显示刷新率",
+                    "mistimed-frame-count" to "错时帧",
+                    "vo-drop-frame-count" to "渲染丢帧",
+                    "decoder-frame-drop-count" to "解码丢帧",
+                ),
+            ),
+            section(
+                "轨道与文件结构",
+                listOf(
+                    "aid" to "音轨 ID",
+                    "vid" to "视频轨 ID",
+                    "sid" to "字幕轨 ID",
+                    "track-list/count" to "轨道数",
+                    "chapter" to "当前章节",
+                    "chapter-list/count" to "章节数",
+                    "edition" to "当前版本",
+                    "edition-list/count" to "版本数",
+                    "playlist-pos" to "列表位置",
+                    "playlist-count" to "列表长度",
+                ),
+            ),
+        )
+    }
+
+    private fun readPropertyDisplayValue(property: String): String {
+        val value = runCatching { mpv?.getPropertyString(property) }.getOrNull()
+        return value?.takeIf { it.isNotBlank() } ?: "不可用"
+    }
+
     private fun screenshotDir(): File {
         val dir = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
             ?: File(context.filesDir, "screenshots")
@@ -509,6 +704,9 @@ class MpvPlayer @Inject constructor(
     override fun eventProperty(property: String) {
         when (property) {
             PROP_TRACK_LIST -> refreshTracks()
+            PROP_CHAPTER_LIST -> refreshChapters()
+            PROP_EDITION_LIST -> refreshEditions()
+            PROP_PLAYLIST -> refreshPlaylist()
             PROP_AID -> _state.update { it.copy(audioTrackId = readTrackId(PROP_AID)) }
             PROP_VID -> _state.update { it.copy(videoTrackId = readTrackId(PROP_VID)) }
             PROP_SID -> _state.update { it.copy(subtitleTrackId = readTrackId(PROP_SID)) }
@@ -520,8 +718,23 @@ class MpvPlayer @Inject constructor(
             PROP_VIDEO_W -> _state.update { it.copy(videoWidth = value.toInt()) }
             PROP_VIDEO_H -> _state.update { it.copy(videoHeight = value.toInt()) }
             PROP_VIDEO_ROTATE -> _state.update { it.copy(videoRotate = value.toInt()) }
-            PROP_PLAYLIST_POS -> _state.update { it.copy(playlistPosition = value.toInt()) }
-            PROP_PLAYLIST_COUNT -> _state.update { it.copy(playlistCount = value.toInt()) }
+            PROP_PLAYLIST_POS -> {
+                val position = value.toInt()
+                _state.update { state ->
+                    state.copy(
+                        playlistPosition = position,
+                        playlistItems = state.playlistItems.map { item ->
+                            item.copy(isPlaying = item.index == position)
+                        },
+                    )
+                }
+            }
+            PROP_PLAYLIST_COUNT -> {
+                _state.update { it.copy(playlistCount = value.toInt()) }
+                refreshPlaylist()
+            }
+            PROP_CHAPTER -> _state.update { it.copy(currentChapter = value.toInt()) }
+            PROP_EDITION -> _state.update { it.copy(currentEdition = value.toInt()) }
         }
     }
 
@@ -534,6 +747,8 @@ class MpvPlayer @Inject constructor(
             PROP_ASPECT -> _state.update { it.copy(videoAspect = value.toFloat()) }
             PROP_SUB_DELAY -> _state.update { it.copy(subtitleDelay = value) }
             PROP_AUDIO_DELAY -> _state.update { it.copy(audioDelay = value) }
+            PROP_SUB_SCALE -> _state.update { it.copy(subtitleScale = value.toFloat()) }
+            PROP_SUB_POS -> _state.update { it.copy(subtitlePosition = value.toInt()) }
         }
     }
 
@@ -545,6 +760,7 @@ class MpvPlayer @Inject constructor(
             PROP_EOF -> _state.update { it.copy(eofReached = value) }
             PROP_IDLE -> _state.update { it.copy(idle = value) }
             PROP_MUTE -> _state.update { it.copy(muted = value) }
+            PROP_SEEKABLE -> _state.update { it.copy(seekable = value) }
         }
     }
 
@@ -553,6 +769,10 @@ class MpvPlayer @Inject constructor(
             PROP_MEDIA_TITLE -> _state.update { it.copy(mediaTitle = value) }
             PROP_HWDEC_CURRENT -> _state.update { it.copy(hwdecActive = value) }
             PROP_LOOP_FILE, PROP_LOOP_PLAYLIST -> _state.update { it.copy(loopMode = readLoopMode()) }
+            PROP_AB_LOOP_A -> _state.update { it.copy(abLoopA = readOptionalSeconds(value)) }
+            PROP_AB_LOOP_B -> _state.update { it.copy(abLoopB = readOptionalSeconds(value)) }
+            PROP_DEINTERLACE -> _state.update { it.copy(deinterlace = value) }
+            PROP_TONE_MAPPING -> _state.update { it.copy(toneMapping = value) }
         }
     }
 
@@ -568,6 +788,9 @@ class MpvPlayer @Inject constructor(
             MpvEvent.FILE_LOADED -> {
                 refreshTracks()
                 refreshVideoParams()
+                refreshChapters()
+                refreshEditions()
+                refreshPlaylist()
                 _state.update { it.copy(idle = false, error = null, eofReached = false) }
                 _fileLoaded.tryEmit(Unit)
                 // 外部字幕要等文件就绪后再追加：否则会与自动加载的同名字幕互相顶掉
@@ -628,16 +851,40 @@ class MpvPlayer @Inject constructor(
     private fun observeProperties() {
         val doubles = arrayOf(
             PROP_TIME_POS, PROP_DURATION, PROP_SPEED, PROP_VOLUME,
-            PROP_ASPECT, PROP_SUB_DELAY, PROP_AUDIO_DELAY,
+            PROP_ASPECT, PROP_SUB_DELAY, PROP_AUDIO_DELAY, PROP_SUB_SCALE, PROP_SUB_POS,
         )
         val flags = arrayOf(
             PROP_PAUSE, PROP_BUFFERING, PROP_SEEKING, PROP_EOF, PROP_IDLE, PROP_MUTE,
+            PROP_SEEKABLE,
         )
-        val strings = arrayOf(PROP_MEDIA_TITLE, PROP_HWDEC_CURRENT, PROP_LOOP_FILE, PROP_LOOP_PLAYLIST)
+        val strings = arrayOf(
+            PROP_MEDIA_TITLE,
+            PROP_HWDEC_CURRENT,
+            PROP_LOOP_FILE,
+            PROP_LOOP_PLAYLIST,
+            PROP_AB_LOOP_A,
+            PROP_AB_LOOP_B,
+            PROP_DEINTERLACE,
+            PROP_TONE_MAPPING,
+        )
         val ints = arrayOf(
-            PROP_VIDEO_W, PROP_VIDEO_H, PROP_VIDEO_ROTATE, PROP_PLAYLIST_POS, PROP_PLAYLIST_COUNT,
+            PROP_VIDEO_W,
+            PROP_VIDEO_H,
+            PROP_VIDEO_ROTATE,
+            PROP_PLAYLIST_POS,
+            PROP_PLAYLIST_COUNT,
+            PROP_CHAPTER,
+            PROP_EDITION,
         )
-        val nodes = arrayOf(PROP_TRACK_LIST, PROP_AID, PROP_VID, PROP_SID)
+        val nodes = arrayOf(
+            PROP_TRACK_LIST,
+            PROP_AID,
+            PROP_VID,
+            PROP_SID,
+            PROP_CHAPTER_LIST,
+            PROP_EDITION_LIST,
+            PROP_PLAYLIST,
+        )
 
         doubles.forEach { runCatching { mpv?.observeProperty(it, MpvFormat.DOUBLE) } }
         flags.forEach { runCatching { mpv?.observeProperty(it, MpvFormat.FLAG) } }
@@ -677,6 +924,101 @@ class MpvPlayer @Inject constructor(
             )
         }
         _state.update { it.copy(tracks = list) }
+    }
+
+    private fun refreshChapters() {
+        if (!initialized) return
+        val count = runCatching { mpv?.getPropertyInt("chapter-list/count") }.getOrNull() ?: 0
+        val chapters = if (count <= 0) {
+            emptyList()
+        } else {
+            buildList {
+                for (index in 0 until count) {
+                    val time = runCatching {
+                        mpv?.getPropertyDouble("chapter-list/$index/time")
+                    }.getOrNull() ?: continue
+                    add(
+                        MpvChapter(
+                            index = index,
+                            title = readOptionalProperty("chapter-list/$index/title"),
+                            timeMs = (time * 1000.0).toLong(),
+                        ),
+                    )
+                }
+            }
+        }
+        val current = runCatching { mpv?.getPropertyInt("chapter") }.getOrNull() ?: -1
+        _state.update { it.copy(chapters = chapters, currentChapter = current) }
+    }
+
+    private fun refreshEditions() {
+        if (!initialized) return
+        val count = runCatching { mpv?.getPropertyInt("edition-list/count") }.getOrNull() ?: 0
+        val current = runCatching { mpv?.getPropertyInt("edition") }.getOrNull() ?: -1
+        val editions = if (count <= 0) {
+            emptyList()
+        } else {
+            buildList {
+                for (index in 0 until count) {
+                    add(
+                        MpvEdition(
+                            index = index,
+                            title = readOptionalProperty("edition-list/$index/title"),
+                            isDefault = runCatching {
+                                mpv?.getPropertyBoolean("edition-list/$index/default")
+                            }.getOrNull() == true,
+                            isSelected = current == index,
+                        ),
+                    )
+                }
+            }
+        }
+        _state.update { it.copy(editions = editions, currentEdition = current) }
+    }
+
+    private fun refreshPlaylist() {
+        if (!initialized) return
+        val count = runCatching { mpv?.getPropertyInt("playlist/count") }.getOrNull() ?: 0
+        val current = runCatching { mpv?.getPropertyInt("playlist-pos") }.getOrNull() ?: -1
+        val currentTitle = readOptionalProperty(PROP_MEDIA_TITLE)
+        val items = if (count <= 0) {
+            emptyList()
+        } else {
+            buildList {
+                for (index in 0 until count) {
+                    // mpv 的 playlist 节点只稳定提供 filename/current/playing；
+                    // 条目不存在独立的 title 字段，当前条目标题从 media-title 补。
+                    val playing = runCatching {
+                        mpv?.getPropertyBoolean("playlist/$index/playing")
+                    }.getOrNull() ?: (index == current)
+                    add(
+                        MpvPlaylistItem(
+                            index = index,
+                            title = currentTitle.takeIf { index == current },
+                            filename = readOptionalProperty("playlist/$index/filename"),
+                            isPlaying = playing,
+                        ),
+                    )
+                }
+            }
+        }
+        _state.update {
+            it.copy(
+                playlistItems = items,
+                playlistPosition = current,
+                playlistCount = count,
+            )
+        }
+    }
+
+    private fun readOptionalProperty(property: String): String? =
+        runCatching { mpv?.getPropertyString(property) }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() && !it.equals("no", ignoreCase = true) }
+
+    private fun readOptionalSeconds(value: String): Double? {
+        if (value.isBlank() || value.equals("no", ignoreCase = true)) return null
+        return value.toDoubleOrNull()
     }
 
     private fun refreshVideoParams() {
@@ -748,5 +1090,17 @@ class MpvPlayer @Inject constructor(
         private const val PROP_LOOP_PLAYLIST = "loop-playlist"
         private const val PROP_SUB_DELAY = "sub-delay"
         private const val PROP_AUDIO_DELAY = "audio-delay"
+        private const val PROP_SEEKABLE = "seekable"
+        private const val PROP_CHAPTER_LIST = "chapter-list"
+        private const val PROP_CHAPTER = "chapter"
+        private const val PROP_EDITION_LIST = "edition-list"
+        private const val PROP_EDITION = "edition"
+        private const val PROP_PLAYLIST = "playlist"
+        private const val PROP_AB_LOOP_A = "ab-loop-a"
+        private const val PROP_AB_LOOP_B = "ab-loop-b"
+        private const val PROP_SUB_SCALE = "sub-scale"
+        private const val PROP_SUB_POS = "sub-pos"
+        private const val PROP_DEINTERLACE = "deinterlace"
+        private const val PROP_TONE_MAPPING = "tone-mapping"
     }
 }

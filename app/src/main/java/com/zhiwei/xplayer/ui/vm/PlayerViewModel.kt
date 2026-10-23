@@ -18,9 +18,11 @@ import com.zhiwei.xplayer.core.webdav.DavAccount
 import com.zhiwei.xplayer.core.webdav.WebDavRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.Credentials
 import javax.inject.Inject
@@ -137,11 +139,15 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun next() {
-        queueController.next()
+        if (!queueController.next()) {
+            player.next()
+        }
     }
 
     fun previous() {
-        queueController.previous()
+        if (!queueController.previous()) {
+            player.previous()
+        }
     }
 
     fun setLoopMode(mode: Int) {
@@ -150,13 +156,21 @@ class PlayerViewModel @Inject constructor(
 
     fun screenshot() {
         val path = player.screenshot()
-        player.notify(
-            if (path != null) {
-                context.getString(R.string.player_screenshot_saved, path)
-            } else {
-                context.getString(R.string.player_screenshot_failed)
-            },
-        )
+        if (path == null) {
+            player.notify(context.getString(R.string.player_screenshot_failed))
+            return
+        }
+        viewModelScope.launch {
+            val file = File(path)
+            repeat(20) {
+                if (file.isFile && file.length() > 0L) {
+                    player.notify(context.getString(R.string.player_screenshot_saved, path))
+                    return@launch
+                }
+                delay(100L)
+            }
+            player.notify(context.getString(R.string.player_screenshot_failed))
+        }
     }
 
     fun stopPlayback() {

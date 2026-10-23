@@ -11,7 +11,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Icon
@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 
 /** 播放器页里可弹出的面板种类 */
 enum class PlayerSheet {
+    TOOLS,
     SPEED,
     AUDIO_TRACK,
     VIDEO_TRACK,
@@ -36,6 +37,13 @@ enum class PlayerSheet {
     LOOP,
     SUBTITLE_DELAY,
     AUDIO_DELAY,
+    ROTATION,
+    CHAPTER,
+    EDITION,
+    PLAYLIST,
+    AB_LOOP,
+    SUBTITLE_STYLE,
+    VIDEO_ENHANCE,
 }
 
 /** 面板里的一个选项 */
@@ -43,6 +51,7 @@ data class SheetOption(
     val label: String,
     val detail: String? = null,
     val selected: Boolean = false,
+    val enabled: Boolean = true,
     val onClick: () -> Unit,
 )
 
@@ -62,6 +71,7 @@ fun OptionSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
     ) {
         Text(
             text = title,
@@ -75,11 +85,16 @@ fun OptionSheet(
                 .heightIn(max = 420.dp),
             contentPadding = PaddingValues(bottom = 24.dp),
         ) {
-            items(items = options, key = { it.label + (it.detail ?: "") }) { option ->
+            itemsIndexed(
+                items = options,
+                key = { index, option ->
+                    "$index|${option.label}|${option.detail.orEmpty()}"
+                },
+            ) { _, option ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable(onClick = option.onClick)
+                        .clickable(enabled = option.enabled, onClick = option.onClick)
                         .padding(horizontal = 20.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -87,6 +102,11 @@ fun OptionSheet(
                         Text(
                             text = option.label,
                             style = MaterialTheme.typography.bodyMedium,
+                            color = if (option.enabled) {
+                                MaterialTheme.colorScheme.onSurface
+                            } else {
+                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                            },
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -95,7 +115,11 @@ fun OptionSheet(
                             Text(
                                 text = detail,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = if (option.enabled) {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                                },
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )

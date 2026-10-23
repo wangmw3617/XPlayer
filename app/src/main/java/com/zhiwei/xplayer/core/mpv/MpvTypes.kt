@@ -64,6 +64,53 @@ data class MpvTrack(
     val isSubtitle: Boolean get() = type == "sub"
 }
 
+/** mpv 当前文件中的一个章节。 */
+data class MpvChapter(
+    val index: Int,
+    val title: String?,
+    val timeMs: Long,
+) {
+    val displayName: String
+        get() = title?.takeIf { it.isNotBlank() } ?: "章节 ${index + 1}"
+}
+
+/** 蓝光等多版本文件中的 edition。 */
+data class MpvEdition(
+    val index: Int,
+    val title: String?,
+    val isDefault: Boolean,
+    val isSelected: Boolean,
+) {
+    val displayName: String
+        get() = title?.takeIf { it.isNotBlank() } ?: "版本 ${index + 1}"
+}
+
+/** mpv 内部播放列表条目，用于 M3U 等播放列表文件。 */
+data class MpvPlaylistItem(
+    val index: Int,
+    val title: String?,
+    val filename: String?,
+    val isPlaying: Boolean,
+) {
+    val displayName: String
+        get() = title?.takeIf { it.isNotBlank() }
+            ?: filename?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+            ?: "条目 ${index + 1}"
+}
+
+/** 原始播放信息面板中的一行。 */
+data class PlaybackInfoRow(
+    val key: String,
+    val label: String,
+    val value: String,
+)
+
+/** 原始播放信息面板的一组属性。 */
+data class PlaybackInfoSection(
+    val title: String,
+    val rows: List<PlaybackInfoRow>,
+)
+
 /**
  * 一次播放请求。
  *
@@ -117,11 +164,29 @@ data class PlayerState(
     val subtitleTrackId: Int = -1,
     val subtitleDelay: Double = 0.0,
     val audioDelay: Double = 0.0,
+    val seekable: Boolean = true,
+    val chapters: List<MpvChapter> = emptyList(),
+    val currentChapter: Int = -1,
+    val editions: List<MpvEdition> = emptyList(),
+    val currentEdition: Int = -1,
+    val playlistItems: List<MpvPlaylistItem> = emptyList(),
+    val abLoopA: Double? = null,
+    val abLoopB: Double? = null,
+    val subtitleScale: Float = 1f,
+    val subtitlePosition: Int = 100,
+    val deinterlace: String = "auto",
+    val toneMapping: String = "auto",
     val error: String? = null,
 ) {
     val audioTracks: List<MpvTrack> get() = tracks.filter { it.isAudio }
     val videoTracks: List<MpvTrack> get() = tracks.filter { it.isVideo }
     val subtitleTracks: List<MpvTrack> get() = tracks.filter { it.isSubtitle }
     val hasVideo: Boolean get() = videoWidth > 0 && videoHeight > 0
-    val hasMedia: Boolean get() = !idle && durationMs > 0L
+    val hasMedia: Boolean get() = !idle
+    val hasKnownDuration: Boolean get() = durationMs > 0L
+    val isLiveOrUnknownDuration: Boolean get() = hasMedia && durationMs <= 0L
+    val canMpvPlaylistNext: Boolean
+        get() = playlistPosition >= 0 && playlistPosition < playlistCount - 1
+    val canMpvPlaylistPrevious: Boolean
+        get() = playlistPosition > 0
 }

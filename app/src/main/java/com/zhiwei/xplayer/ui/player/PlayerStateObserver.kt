@@ -58,17 +58,28 @@ class PlayerStateObserver(private val snapshot: State<PlayerState>) {
     /** 当前文件 uri。换文件时用它做 key 复位画面参数。 */
     val sourceUri: String? get() = sourceUriState.value
 
-    /** 有媒体且时长已解出。用来决定传输按钮是否可用。 */
+    /** mpv 当前已经加载媒体。未知时长的直播同样应返回 true。 */
     val hasMedia: Boolean get() = hasMediaState.value
 
     val error: String? get() = errorState.value
 
-    /** 缓冲中：mpv 明确在缓冲，或者文件已加载但时长还没解出来。 */
+    /** mpv 明确报告缓冲，或者文件刚开始加载、还没有任何轨道信息。 */
     val buffering: Boolean get() = bufferingState.value
 
     val paused: Boolean get() = pausedState.value
 
     val speed: Float get() = speedState.value
+
+    val muted: Boolean get() = mutedState.value
+
+    val durationKnown: Boolean get() = durationKnownState.value
+
+    /** 当前媒体是否允许跳转；直播、部分网络流可能不支持。 */
+    val seekable: Boolean get() = seekableState.value
+
+    val canMpvPlaylistNext: Boolean get() = canMpvPlaylistNextState.value
+
+    val canMpvPlaylistPrevious: Boolean get() = canMpvPlaylistPreviousState.value
 
     val loopMode: Int get() = loopModeState.value
 
@@ -102,9 +113,15 @@ class PlayerStateObserver(private val snapshot: State<PlayerState>) {
     private val errorState = derivedStateOf { snapshot.value.error }
     private val pausedState = derivedStateOf { snapshot.value.paused }
     private val speedState = derivedStateOf { snapshot.value.speed }
+    private val mutedState = derivedStateOf { snapshot.value.muted }
     private val loopModeState = derivedStateOf { snapshot.value.loopMode }
     private val hwdecState = derivedStateOf { snapshot.value.hwdecActive }
     private val durationState = derivedStateOf { snapshot.value.durationMs }
+    private val durationKnownState = derivedStateOf { snapshot.value.hasKnownDuration }
+    private val seekableState = derivedStateOf { snapshot.value.seekable }
+    private val canMpvPlaylistNextState = derivedStateOf { snapshot.value.canMpvPlaylistNext }
+    private val canMpvPlaylistPreviousState =
+        derivedStateOf { snapshot.value.canMpvPlaylistPrevious }
 
     private val positionState = derivedStateOf {
         // 整除再乘回，等价于向下取整到 200ms 的整数倍
@@ -113,7 +130,7 @@ class PlayerStateObserver(private val snapshot: State<PlayerState>) {
 
     private val bufferingState = derivedStateOf {
         val s = snapshot.value
-        s.buffering || (!s.idle && s.durationMs == 0L)
+        s.buffering || (!s.idle && s.tracks.isEmpty() && s.durationMs == 0L)
     }
 
     private val titleState = derivedStateOf {
@@ -146,10 +163,13 @@ fun rememberPlayerStateObserver(state: StateFlow<PlayerState>): PlayerStateObser
 }
 
 private fun buildSubtitle(state: PlayerState): String {
-    if (state.durationMs <= 0L) return ""
-    val parts = mutableListOf(
-        "${Formatters.position(state.positionMs)} / ${Formatters.duration(state.durationMs)}",
-    )
+    if (state.idle) return ""
+    val parts = mutableListOf<String>()
+    if (state.durationMs > 0L) {
+        parts += "${Formatters.position(state.positionMs)} / ${Formatters.duration(state.durationMs)}"
+    } else {
+        parts += "直播或未知时长"
+    }
     if (state.videoWidth > 0 && state.videoHeight > 0) {
         parts += "${state.videoWidth}×${state.videoHeight}"
     }

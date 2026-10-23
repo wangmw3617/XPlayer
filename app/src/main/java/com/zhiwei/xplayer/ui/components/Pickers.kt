@@ -60,8 +60,27 @@ fun rememberSubtitlePicker(onPicked: (Uri) -> Unit): ManagedActivityResultLaunch
     }
 }
 
-/** 媒体类型的 MIME 过滤（给上面两个选择器用） */
+/** 「加载外部音轨」的选择器 */
+@Composable
+fun rememberAudioPicker(onPicked: (Uri) -> Unit): ManagedActivityResultLauncher<Array<String>, Uri?> {
+    val context = LocalContext.current
+    return rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+            onPicked(uri)
+        }
+    }
+}
+
+/** 媒体类型的 MIME 过滤（给媒体、字幕和外部音轨选择器用） */
 val MEDIA_MIME_TYPES: Array<String> = arrayOf("video/*", "audio/*")
+
+val AUDIO_MIME_TYPES: Array<String> = arrayOf("audio/*", "application/octet-stream")
 
 /**
  * 字幕文件的 MIME 过滤。

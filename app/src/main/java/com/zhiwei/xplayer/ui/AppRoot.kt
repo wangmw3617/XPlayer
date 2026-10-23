@@ -51,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asAndroidColorFilter
@@ -89,6 +90,7 @@ import com.zhiwei.xplayer.ui.theme.glass.CapsuleShape
 import com.zhiwei.xplayer.core.mpv.PlaybackSource
 import com.zhiwei.xplayer.ui.components.queryDisplayName
 import com.zhiwei.xplayer.ui.nav.FolderRoute
+import com.zhiwei.xplayer.ui.nav.GestureSettingsRoute
 import com.zhiwei.xplayer.ui.nav.HistoryRoute
 import com.zhiwei.xplayer.ui.nav.HomeRoute
 import com.zhiwei.xplayer.ui.nav.LibraryRoute
@@ -96,15 +98,18 @@ import com.zhiwei.xplayer.ui.nav.LogRoute
 import com.zhiwei.xplayer.ui.nav.PlayerRoute
 import com.zhiwei.xplayer.ui.nav.SettingsRoute
 import com.zhiwei.xplayer.ui.nav.StreamRoute
+import com.zhiwei.xplayer.ui.nav.SystemInfoRoute
 import com.zhiwei.xplayer.ui.nav.WebDavRoute
 import com.zhiwei.xplayer.ui.player.PlayerScreen
 import com.zhiwei.xplayer.ui.screen.FolderScreen
+import com.zhiwei.xplayer.ui.screen.GestureSettingsScreen
 import com.zhiwei.xplayer.ui.screen.HistoryScreen
 import com.zhiwei.xplayer.ui.screen.HomeScreen
 import com.zhiwei.xplayer.ui.screen.LibraryScreen
 import com.zhiwei.xplayer.ui.screen.LogScreen
 import com.zhiwei.xplayer.ui.screen.SettingsScreen
 import com.zhiwei.xplayer.ui.screen.StreamScreen
+import com.zhiwei.xplayer.ui.screen.SystemInfoScreen
 import com.zhiwei.xplayer.ui.screen.WebDavBrowserScreen
 import com.zhiwei.xplayer.ui.theme.AppBackground
 import com.zhiwei.xplayer.ui.theme.GlassDefaults
@@ -230,7 +235,14 @@ fun AppRoot() {
                         )
                     }
                     composable<FolderRoute> { FolderScreen(onPlay = { source -> playFrom(navController, source) }) }
-                    composable<SettingsRoute> { SettingsScreen() }
+                    composable<SettingsRoute> {
+                        SettingsScreen(
+                            onOpenGestures = { navController.navigate(GestureSettingsRoute) },
+                            onOpenSystemInfo = { navController.navigate(SystemInfoRoute) },
+                        )
+                    }
+                    composable<GestureSettingsRoute> { GestureSettingsScreen() }
+                    composable<SystemInfoRoute> { SystemInfoScreen() }
                     composable<StreamRoute> { StreamScreen(onPlay = { source -> playFrom(navController, source) }) }
                     composable<WebDavRoute> {
                         WebDavBrowserScreen(
@@ -307,7 +319,7 @@ private fun GlassBottomBar(
     modifier: Modifier = Modifier,
 ) {
     val isLightTheme = !isSystemInDarkTheme()
-    val accentColor = if (isLightTheme) Color(0xFF0088FF) else Color(0xFF0091FF)
+    val accentColor = MaterialTheme.colorScheme.primary
     val containerColor = if (isLightTheme) {
         Color(0xFFFAFAFA).copy(alpha = 0.4f)
     } else {
@@ -437,8 +449,8 @@ private fun GlassBottomBar(
                     shape = { CapsuleShape },
                     effects = {
                         vibrancy()
-                        blur(8f.dp.toPx())
-                        lens(24f.dp.toPx(), 24f.dp.toPx())
+                        blur(12f.dp.toPx())
+                        lens(28f.dp.toPx(), 28f.dp.toPx())
                     },
                     layerBlock = {
                         val progress = dampedDragAnimation.pressProgress
@@ -448,7 +460,16 @@ private fun GlassBottomBar(
                     },
                     highlight = { GlassDefaults.highlight },
                     shadow = { GlassDefaults.shadow },
-                    onDrawSurface = { drawRect(containerColor) },
+                    onDrawSurface = {
+                        drawRect(containerColor)
+                        drawRect(
+                            Brush.verticalGradient(
+                                0f to Color.White.copy(alpha = 0.10f),
+                                0.5f to Color.Transparent,
+                                1f to Color.White.copy(alpha = 0.035f),
+                            ),
+                        )
+                    },
                 )
                 .then(interactiveHighlight.modifier)
                 .height(BOTTOM_BAR_HEIGHT)
@@ -605,6 +626,8 @@ private fun titleFor(destination: NavDestination?): String = when {
     destination.hasRoute(LibraryRoute::class) -> "媒体库"
     destination.hasRoute(FolderRoute::class) -> "文件夹"
     destination.hasRoute(SettingsRoute::class) -> "设置"
+    destination.hasRoute(GestureSettingsRoute::class) -> "手势设置"
+    destination.hasRoute(SystemInfoRoute::class) -> "系统与硬件信息"
     destination.hasRoute(StreamRoute::class) -> "网络串流"
     destination.hasRoute(WebDavRoute::class) -> "WebDAV"
     destination.hasRoute(HistoryRoute::class) -> "播放历史"
