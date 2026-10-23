@@ -175,7 +175,7 @@ class SystemHardwareProbe @Inject constructor(
             context.getSystemService(WindowManager::class.java)?.defaultDisplay
         }.getOrNull()
         val hdrCapabilities = runCatching { display?.hdrCapabilities }.getOrNull()
-        val supportedHdrTypes = hdrCapabilities?.supportedHdrTypes.orEmpty()
+        val supportedHdrTypes = hdrCapabilities?.supportedHdrTypes ?: intArrayOf()
         val mode = runCatching { display?.mode }.getOrNull()
         val metrics = context.resources.displayMetrics
 
