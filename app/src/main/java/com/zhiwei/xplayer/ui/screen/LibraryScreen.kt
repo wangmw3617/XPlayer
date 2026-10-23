@@ -22,13 +22,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.ViewList
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.Sort
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -57,7 +59,9 @@ import com.zhiwei.xplayer.R
 import com.zhiwei.xplayer.core.media.MediaEntry
 import com.zhiwei.xplayer.core.media.MediaSort
 import com.zhiwei.xplayer.core.mpv.PlaybackSource
+import com.zhiwei.xplayer.core.media.MediaAccess
 import com.zhiwei.xplayer.core.util.Formatters
+import com.zhiwei.xplayer.ui.components.rememberResources
 import com.zhiwei.xplayer.ui.components.EmptyState
 import com.zhiwei.xplayer.ui.components.MediaListRow
 import com.zhiwei.xplayer.ui.components.MediaThumbnail
@@ -66,30 +70,35 @@ import com.zhiwei.xplayer.ui.vm.LibraryViewModel
 @Composable
 fun LibraryScreen(
     onPlay: (PlaybackSource) -> Unit,
+    onPlayQueue: (List<PlaybackSource>, Int) -> Unit = { queue, index ->
+        queue.getOrNull(index)?.let(onPlay)
+    },
     onOpen: (Any) -> Unit,
     viewModel: LibraryViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
+    val resources = rememberResources()
     var tabIndex by rememberSaveable { mutableIntStateOf(0) }
     var query by rememberSaveable { mutableStateOf("") }
     var sortName by rememberSaveable { mutableStateOf(MediaSort.ADDED.name) }
     var gridMode by rememberSaveable { mutableStateOf(true) }
 
-    val videos by viewModel.videos.collectAsStateWithLifecycle()
-    val audio by viewModel.audio.collectAsStateWithLifecycle()
-    val permissionGranted by viewModel.permissionGranted.collectAsStateWithLifecycle()
-    val scanned by viewModel.scanned.collectAsStateWithLifecycle()
+    val catalog by viewModel.catalog.collectAsStateWithLifecycle()
+    val videos = catalog.videos
+    val audio = catalog.audio
+    val scanned = catalog.scanned
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { viewModel.refresh() }
 
     LaunchedEffect(Unit) {
-        if (permissionGranted) viewModel.refresh()
+        viewModel.ensureLoaded()
     }
 
     val sort = MediaSort.fromName(sortName)
     val source = if (tabIndex == 0) videos else audio
+    val currentAccess = if (tabIndex == 0) catalog.videoAccess else catalog.audioAccess
     val entries = remember(source, query, sort) {
         source
             .filter { query.isBlank() || it.title.contains(query, ignoreCase = true) }
@@ -101,12 +110,12 @@ fun LibraryScreen(
             Tab(
                 selected = tabIndex == 0,
                 onClick = { tabIndex = 0 },
-                text = { Text("${context.getString(R.string.library_video)} (${videos.size})") },
+                text = { Text("${resources.getString(R.string.library_video)} (${videos.size})") },
             )
             Tab(
                 selected = tabIndex == 1,
                 onClick = { tabIndex = 1 },
-                text = { Text("${context.getString(R.string.library_audio)} (${audio.size})") },
+                text = { Text("${resources.getString(R.string.library_audio)} (${audio.size})") },
             )
         }
 
@@ -121,53 +130,106 @@ fun LibraryScreen(
                 onValueChange = { query = it },
                 modifier = Modifier.weight(1f),
                 singleLine = true,
-                placeholder = { Text(context.getString(R.string.library_search)) },
+                placeholder = { Text(resources.getString(R.string.library_search)) },
                 leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 shape = RoundedCornerShape(16.dp),
             )
             Spacer(Modifier.size(4.dp))
+            IconButton(
+                onClick = { onPlayQueue(entries.map { it.toSource() }, 0) },
+                enabled = entries.isNotEmpty(),
+            ) {
+                Icon(
+                    Icons.Filled.PlayArrow,
+                    contentDescription = resources.getString(R.string.player_play_all),
+                )
+            }
             SortMenu(
                 current = sort,
                 onSelected = { sortName = it.name },
             )
             IconButton(onClick = { gridMode = !gridMode }) {
                 Icon(
-                    imageVector = if (gridMode) Icons.Filled.ViewList else Icons.Filled.GridView,
-                    contentDescription = context.getString(
+                    imageVector = if (gridMode) Icons.AutoMirrored.Filled.ViewList else Icons.Filled.GridView,
+                    contentDescription = resources.getString(
                         if (gridMode) R.string.library_list else R.string.library_grid,
                     ),
                 )
             }
         }
 
+        if (currentAccess == MediaAccess.PARTIAL) {
+            Text(
+                text = resources.getString(R.string.permission_partial_video),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+        }
+
+        catalog.error?.let { message ->
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+        }
+
         when {
-            !permissionGranted -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            currentAccess == MediaAccess.DENIED -> Box(
+                Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
                 EmptyState(
                     icon = Icons.Outlined.Movie,
-                    title = context.getString(R.string.home_empty),
-                    description = context.getString(R.string.home_empty_desc),
-                    actionLabel = context.getString(R.string.home_grant),
-                    onAction = { permissionLauncher.launch(viewModel.requiredPermissions()) },
+                    title = resources.getString(R.string.home_empty),
+                    description = resources.getString(R.string.home_empty_desc),
+                    actionLabel = resources.getString(R.string.home_grant),
+                    onAction = {
+                        permissionLauncher.launch(
+                            if (tabIndex == 0) {
+                                viewModel.requiredVideoPermissions()
+                            } else {
+                                viewModel.requiredPermissions()
+                            },
+                        )
+                    },
                 )
+            }
+
+            catalog.loading && entries.isEmpty() -> Box(
+                Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator()
             }
 
             entries.isEmpty() && scanned -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 EmptyState(
                     icon = Icons.Outlined.Movie,
-                    title = context.getString(R.string.library_empty),
+                    title = resources.getString(R.string.library_empty),
                 )
             }
 
             gridMode -> LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
+                columns = GridCells.Adaptive(minSize = 148.dp),
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = BOTTOM_BAR_RESERVE),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                items(items = entries, key = { it.uri }) { entry ->
-                    MediaGridCard(entry = entry, onClick = { onPlay(entry.toSource()) })
+                items(
+                    count = entries.size,
+                    key = { entries[it].uri },
+                    contentType = { if (entries[it].isVideo) "video" else "audio" },
+                ) { index ->
+                    val entry = entries[index]
+                    MediaGridCard(
+                        entry = entry,
+                        onClick = { onPlayQueue(entries.map { it.toSource() }, index) },
+                    )
                 }
             }
 
@@ -175,13 +237,18 @@ fun LibraryScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = BOTTOM_BAR_RESERVE),
             ) {
-                items(items = entries, key = { it.uri }) { entry ->
+                items(
+                    count = entries.size,
+                    key = { entries[it].uri },
+                    contentType = { if (entries[it].isVideo) "video" else "audio" },
+                ) { index ->
+                    val entry = entries[index]
                     MediaListRow(
                         title = entry.title,
                         subtitle = entrySubtitle(entry),
                         uri = entry.uri,
                         isVideo = entry.isVideo,
-                        onClick = { onPlay(entry.toSource()) },
+                        onClick = { onPlayQueue(entries.map { it.toSource() }, index) },
                     )
                 }
             }
@@ -193,14 +260,15 @@ fun LibraryScreen(
 private fun SortMenu(current: MediaSort, onSelected: (MediaSort) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val resources = rememberResources()
     Box {
         IconButton(onClick = { expanded = true }) {
-            Icon(Icons.Outlined.Sort, contentDescription = context.getString(R.string.library_sort))
+            Icon(Icons.AutoMirrored.Outlined.Sort, contentDescription = resources.getString(R.string.library_sort))
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             MediaSort.entries.forEach { option ->
                 DropdownMenuItem(
-                    text = { Text(context.getString(sortLabel(option))) },
+                    text = { Text(resources.getString(sortLabel(option))) },
                     onClick = {
                         expanded = false
                         onSelected(option)

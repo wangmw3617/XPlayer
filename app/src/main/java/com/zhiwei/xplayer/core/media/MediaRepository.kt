@@ -8,13 +8,39 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import androidx.core.content.ContextCompat
+import androidx.core.net.toUri
 import com.zhiwei.xplayer.core.util.Formatters
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
+
+enum class MediaAccess {
+    DENIED,
+    PARTIAL,
+    FULL,
+}
+
+data class MediaCatalogState(
+    val videos: List<MediaEntry> = emptyList(),
+    val audio: List<MediaEntry> = emptyList(),
+    val videoAccess: MediaAccess = MediaAccess.DENIED,
+    val audioAccess: MediaAccess = MediaAccess.DENIED,
+    val loading: Boolean = false,
+    val scanned: Boolean = false,
+    val error: String? = null,
+) {
+    val hasAnyAccess: Boolean
+        get() = videoAccess != MediaAccess.DENIED || audioAccess != MediaAccess.DENIED
+}
 
 /**
  * MediaStore 媒体扫描。
@@ -27,13 +53,22 @@ import javax.inject.Singleton
 class MediaRepository @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
+    private data class QueryResult(
+        val entries: List<MediaEntry>,
+        val error: String? = null,
+    )
 
-    /** 当前是否有读取媒体的权限（分版本判断） */
-    fun hasMediaPermission(): Boolean {
-        val permission = requiredReadPermission() ?: return true
-        return ContextCompat.checkSelfPermission(context, permission) ==
-            PackageManager.PERMISSION_GRANTED
-    }
+    private val scanMutex = Mutex()
+    private val _catalog = MutableStateFlow(
+        MediaCatalogState(
+            videoAccess = currentVideoAccess(),
+            audioAccess = currentAudioAccess(),
+        ),
+    )
+    val catalog: StateFlow<MediaCatalogState> = _catalog.asStateFlow()
+
+    fun hasMediaPermission(): Boolean =
+        currentVideoAccess() != MediaAccess.DENIED || currentAudioAccess() != MediaAccess.DENIED
 
     fun requiredReadPermissions(): Array<String> = when {
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> arrayOf(
@@ -43,28 +78,114 @@ class MediaRepository @Inject constructor(
         else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
     }
 
-    private fun requiredReadPermission(): String? = when {
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> Manifest.permission.READ_MEDIA_VIDEO
-        else -> Manifest.permission.READ_EXTERNAL_STORAGE
+    fun requiredVideoPermissions(): Array<String> = when {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ->
+            arrayOf(Manifest.permission.READ_MEDIA_VIDEO)
+        else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
     }
 
-    suspend fun loadAll(): List<MediaEntry> = withContext(Dispatchers.IO) {
-        if (!hasMediaPermission()) return@withContext emptyList()
-        val result = ArrayList<MediaEntry>()
-        runCatching { result.addAll(queryVideos()) }
-        runCatching { result.addAll(queryAudio()) }
-        result
+    /**
+     * 应用级媒体扫描。多个页面共享同一份结果，并且同一时间只允许一个扫描任务。
+     * [force] 用于权限变化后的主动刷新，普通首次进入只调用一次。
+     */
+    suspend fun refresh(force: Boolean = false) = scanMutex.withLock {
+        val videoAccess = currentVideoAccess()
+        val audioAccess = currentAudioAccess()
+        val previous = _catalog.value
+        if (
+            !force &&
+            previous.scanned &&
+            previous.videoAccess == videoAccess &&
+            previous.audioAccess == audioAccess
+        ) {
+            return@withLock
+        }
+
+        _catalog.value = previous.copy(
+            videoAccess = videoAccess,
+            audioAccess = audioAccess,
+            loading = true,
+            error = null,
+        )
+
+        if (videoAccess == MediaAccess.DENIED && audioAccess == MediaAccess.DENIED) {
+            _catalog.value = MediaCatalogState(
+                videoAccess = videoAccess,
+                audioAccess = audioAccess,
+                loading = false,
+                scanned = true,
+            )
+            return@withLock
+        }
+
+        // 视频与音频是两次独立的 ContentResolver 查询，并发读取可显著缩短媒体库首次加载。
+        val (videoResult, audioResult) = coroutineScope {
+            val video = if (videoAccess != MediaAccess.DENIED) {
+                async(Dispatchers.IO) {
+                    runCatching { queryVideos() }.fold(
+                        onSuccess = { QueryResult(it) },
+                        onFailure = { QueryResult(emptyList(), "视频：${it.message ?: "读取失败"}") },
+                    )
+                }
+            } else {
+                null
+            }
+            val audio = if (audioAccess != MediaAccess.DENIED) {
+                async(Dispatchers.IO) {
+                    runCatching { queryAudio() }.fold(
+                        onSuccess = { QueryResult(it) },
+                        onFailure = { QueryResult(emptyList(), "音频：${it.message ?: "读取失败"}") },
+                    )
+                }
+            } else {
+                null
+            }
+            (video?.await() ?: QueryResult(emptyList())) to
+                (audio?.await() ?: QueryResult(emptyList()))
+        }
+        val errors = listOfNotNull(videoResult.error, audioResult.error)
+
+        _catalog.value = MediaCatalogState(
+            videos = videoResult.entries,
+            audio = audioResult.entries,
+            videoAccess = videoAccess,
+            audioAccess = audioAccess,
+            loading = false,
+            scanned = true,
+            error = errors.takeIf { it.isNotEmpty() }?.joinToString("；"),
+        )
     }
 
-    suspend fun loadVideos(): List<MediaEntry> = withContext(Dispatchers.IO) {
-        if (!hasMediaPermission()) return@withContext emptyList()
-        runCatching { queryVideos() }.getOrDefault(emptyList())
+    private fun currentVideoAccess(): MediaAccess {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return legacyAccess()
+        if (granted(Manifest.permission.READ_MEDIA_VIDEO)) return MediaAccess.FULL
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+        ) {
+            return MediaAccess.PARTIAL
+        }
+        return MediaAccess.DENIED
     }
 
-    suspend fun loadAudio(): List<MediaEntry> = withContext(Dispatchers.IO) {
-        if (!hasMediaPermission()) return@withContext emptyList()
-        runCatching { queryAudio() }.getOrDefault(emptyList())
+    private fun currentAudioAccess(): MediaAccess {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return legacyAccess()
+        return if (granted(Manifest.permission.READ_MEDIA_AUDIO)) {
+            MediaAccess.FULL
+        } else {
+            MediaAccess.DENIED
+        }
     }
+
+    private fun legacyAccess(): MediaAccess =
+        if (granted(Manifest.permission.READ_EXTERNAL_STORAGE)) {
+            MediaAccess.FULL
+        } else {
+            MediaAccess.DENIED
+        }
+
+    private fun granted(permission: String): Boolean =
+        ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
     // ---------------------------------------------------------------- video ----
 
@@ -191,7 +312,7 @@ class MediaRepository @Inject constructor(
         fun idOf(uri: Uri): Long = runCatching { ContentUris.parseId(uri) }.getOrDefault(-1L)
 
         /** 从 uri 里取出 MediaStore 的 id（用于缩略图 API），失败返回 -1 */
-        fun idOf(uri: String): Long = idOf(Uri.parse(uri))
+        fun idOf(uri: String): Long = idOf(uri.toUri())
 
         /** 供 UI 直接用的扩展名判断 */
         fun looksLikeVideo(fileName: String): Boolean = Formatters.isVideoFile(fileName)

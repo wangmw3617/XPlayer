@@ -7,9 +7,6 @@
         <include
             domain="database"
             path="." />
-        <exclude
-            domain="file"
-            path="logs" />
     </cloud-backup>
     <device-transfer>
         <include

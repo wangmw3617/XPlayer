@@ -1,5 +1,6 @@
 package com.zhiwei.xplayer.ui.screen
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,11 +16,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.InsertDriveFile
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -53,6 +55,7 @@ import com.zhiwei.xplayer.core.mpv.PlaybackSource
 import com.zhiwei.xplayer.core.util.Formatters
 import com.zhiwei.xplayer.core.webdav.DavAccount
 import com.zhiwei.xplayer.core.webdav.DavEntry
+import com.zhiwei.xplayer.ui.components.rememberResources
 import com.zhiwei.xplayer.ui.components.EmptyState
 import com.zhiwei.xplayer.ui.components.InfoRow
 import com.zhiwei.xplayer.ui.vm.WebDavViewModel
@@ -71,14 +74,43 @@ import com.zhiwei.xplayer.ui.vm.WebDavViewModel
 @Composable
 fun WebDavBrowserScreen(
     onPlay: (PlaybackSource) -> Unit,
+    onPlayQueue: (List<PlaybackSource>, Int) -> Unit = { queue, index ->
+        queue.getOrNull(index)?.let(onPlay)
+    },
     viewModel: WebDavViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
+    val resources = rememberResources()
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
     val account by viewModel.account.collectAsStateWithLifecycle()
 
+    LaunchedEffect(viewModel) {
+        viewModel.messages.collect { message ->
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+        }
+    }
+
     var showAddDialog by remember { mutableStateOf(false) }
+    var showRemoveDialog by remember { mutableStateOf(false) }
+    val playable = remember(account, state.entries) {
+        val headers = if (account == null) emptyList() else viewModel.playbackHeaders()
+        state.entries
+            .filter { it.isPlayable }
+            .mapNotNull { entry ->
+                viewModel.playableUrl(entry)?.let { url ->
+                    DavPlaybackItem(
+                        path = entry.path,
+                        source = PlaybackSource(
+                            uri = url,
+                            title = entry.name,
+                            isNetwork = true,
+                            httpHeaders = headers,
+                        ),
+                    )
+                }
+            }
+    }
 
     // 首次进入或者账号列表就绪后自动选第一个，省去一次点击
     LaunchedEffect(accounts) {
@@ -92,8 +124,30 @@ fun WebDavBrowserScreen(
             onDismiss = { showAddDialog = false },
             onConfirm = { newAccount ->
                 viewModel.addAccount(newAccount)
-                viewModel.openAccount(newAccount)
                 showAddDialog = false
+            },
+        )
+    }
+
+    if (showRemoveDialog && account != null) {
+        AlertDialog(
+            onDismissRequest = { showRemoveDialog = false },
+            title = { Text(resources.getString(R.string.webdav_remove)) },
+            text = { Text(resources.getString(R.string.webdav_remove_confirm)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        account?.let(viewModel::removeAccount)
+                        showRemoveDialog = false
+                    },
+                ) {
+                    Text(resources.getString(R.string.webdav_remove))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRemoveDialog = false }) {
+                    Text(resources.getString(R.string.action_cancel))
+                }
             },
         )
     }
@@ -102,9 +156,9 @@ fun WebDavBrowserScreen(
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             EmptyState(
                 icon = Icons.Outlined.Cloud,
-                title = context.getString(R.string.webdav_empty),
-                description = context.getString(R.string.webdav_add_desc),
-                actionLabel = context.getString(R.string.webdav_add),
+                title = resources.getString(R.string.webdav_empty),
+                description = resources.getString(R.string.webdav_add_desc),
+                actionLabel = resources.getString(R.string.webdav_add),
                 onAction = { showAddDialog = true },
             )
         }
@@ -137,7 +191,7 @@ fun WebDavBrowserScreen(
             item {
                 AssistChip(
                     onClick = { showAddDialog = true },
-                    label = { Text(context.getString(R.string.webdav_add)) },
+                    label = { Text(resources.getString(R.string.webdav_add)) },
                     leadingIcon = {
                         Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     },
@@ -162,7 +216,7 @@ fun WebDavBrowserScreen(
             ) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = context.getString(R.string.webdav_up),
+                    contentDescription = resources.getString(R.string.webdav_up),
                 )
             }
             Text(
@@ -176,16 +230,25 @@ fun WebDavBrowserScreen(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            IconButton(
+                onClick = { onPlayQueue(playable.map { it.source }, 0) },
+                enabled = playable.isNotEmpty(),
+            ) {
+                Icon(
+                    Icons.Filled.PlayArrow,
+                    contentDescription = resources.getString(R.string.player_play_all),
+                )
+            }
             IconButton(onClick = { viewModel.refresh() }) {
                 Icon(
                     Icons.Outlined.Refresh,
-                    contentDescription = context.getString(R.string.webdav_refresh),
+                    contentDescription = resources.getString(R.string.webdav_refresh),
                 )
             }
-            IconButton(onClick = { account?.let { viewModel.removeAccount(it) } }) {
+            IconButton(onClick = { showRemoveDialog = true }) {
                 Icon(
                     Icons.Outlined.Delete,
-                    contentDescription = context.getString(R.string.webdav_remove),
+                    contentDescription = resources.getString(R.string.webdav_remove),
                 )
             }
         }
@@ -200,7 +263,7 @@ fun WebDavBrowserScreen(
                 EmptyState(
                     icon = Icons.Outlined.Cloud,
                     title = state.error.orEmpty(),
-                    actionLabel = context.getString(R.string.webdav_refresh),
+                    actionLabel = resources.getString(R.string.webdav_refresh),
                     onAction = { viewModel.refresh() },
                 )
             }
@@ -208,7 +271,7 @@ fun WebDavBrowserScreen(
             state.entries.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 EmptyState(
                     icon = Icons.Outlined.Folder,
-                    title = context.getString(R.string.webdav_no_media),
+                    title = resources.getString(R.string.webdav_no_media),
                 )
             }
 
@@ -223,17 +286,10 @@ fun WebDavBrowserScreen(
                             if (entry.isDirectory) {
                                 viewModel.openDirectory(entry)
                             } else if (entry.isPlayable) {
-                                val url = viewModel.playableUrl(entry) ?: return@DavEntryRow
-                                onPlay(
-                                    PlaybackSource(
-                                        uri = url,
-                                        title = entry.name,
-                                        isNetwork = true,
-                                        // Basic 凭据走请求头，而不是塞进 uri：
-                                        // uri 会进播放历史并显示在界面上。
-                                        httpHeaders = viewModel.playbackHeaders(),
-                                    ),
-                                )
+                                val index = playable.indexOfFirst { it.path == entry.path }
+                                if (index >= 0) {
+                                    onPlayQueue(playable.map { it.source }, index)
+                                }
                             }
                         },
                     )
@@ -243,11 +299,16 @@ fun WebDavBrowserScreen(
     }
 }
 
+private data class DavPlaybackItem(
+    val path: String,
+    val source: PlaybackSource,
+)
+
 /** 一条 WebDAV 条目。目录显示为「文件夹 / 可进入」，文件显示大小。 */
 @Composable
 private fun DavEntryRow(entry: DavEntry, onClick: () -> Unit) {
     InfoRow(
-        icon = if (entry.isDirectory) Icons.Outlined.Folder else Icons.Outlined.InsertDriveFile,
+        icon = if (entry.isDirectory) Icons.Outlined.Folder else Icons.AutoMirrored.Outlined.InsertDriveFile,
         title = entry.name,
         subtitle = if (entry.isDirectory) null else Formatters.size(entry.sizeBytes),
         onClick = onClick,
@@ -266,6 +327,7 @@ private fun AddServerDialog(
     onConfirm: (DavAccount) -> Unit,
 ) {
     val context = LocalContext.current
+    val resources = rememberResources()
     var url by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -274,7 +336,7 @@ private fun AddServerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(context.getString(R.string.webdav_add)) },
+        title = { Text(resources.getString(R.string.webdav_add)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
@@ -283,9 +345,9 @@ private fun AddServerDialog(
                         url = it
                         error = null
                     },
-                    label = { Text(context.getString(R.string.webdav_url)) },
+                    label = { Text(resources.getString(R.string.webdav_url)) },
                     placeholder = {
-                        Text(context.getString(R.string.webdav_url_hint))
+                        Text(resources.getString(R.string.webdav_url_hint))
                     },
                     singleLine = true,
                     isError = error != null,
@@ -298,14 +360,14 @@ private fun AddServerDialog(
                 OutlinedTextField(
                     value = username,
                     onValueChange = { username = it },
-                    label = { Text(context.getString(R.string.webdav_username)) },
+                    label = { Text(resources.getString(R.string.webdav_username)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
-                    label = { Text(context.getString(R.string.webdav_password)) },
+                    label = { Text(resources.getString(R.string.webdav_password)) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth(),
@@ -313,7 +375,7 @@ private fun AddServerDialog(
                 OutlinedTextField(
                     value = displayName,
                     onValueChange = { displayName = it },
-                    label = { Text(context.getString(R.string.webdav_display_name)) },
+                    label = { Text(resources.getString(R.string.webdav_display_name)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -325,7 +387,7 @@ private fun AddServerDialog(
                     )
                 }
                 Text(
-                    text = context.getString(R.string.webdav_password_note),
+                    text = resources.getString(R.string.webdav_password_note),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.labelSmall,
                 )
@@ -336,7 +398,7 @@ private fun AddServerDialog(
                 onClick = {
                     val trimmed = url.trim()
                     if (trimmed.isBlank()) {
-                        error = context.getString(R.string.webdav_invalid)
+                        error = resources.getString(R.string.webdav_invalid)
                         return@TextButton
                     }
                     onConfirm(
@@ -349,12 +411,12 @@ private fun AddServerDialog(
                     )
                 },
             ) {
-                Text(context.getString(R.string.action_ok))
+                Text(resources.getString(R.string.action_ok))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text(context.getString(R.string.action_cancel))
+                Text(resources.getString(R.string.action_cancel))
             }
         },
     )

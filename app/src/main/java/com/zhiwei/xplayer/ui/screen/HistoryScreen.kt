@@ -34,6 +34,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zhiwei.xplayer.R
 import com.zhiwei.xplayer.core.mpv.PlaybackSource
 import com.zhiwei.xplayer.core.util.Formatters
+import com.zhiwei.xplayer.ui.components.rememberResources
 import com.zhiwei.xplayer.ui.components.EmptyState
 import com.zhiwei.xplayer.ui.components.InfoRow
 import com.zhiwei.xplayer.ui.vm.LibraryViewModel
@@ -45,25 +46,26 @@ fun HistoryScreen(
     viewModel: LibraryViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
+    val resources = rememberResources()
     val history by viewModel.history.collectAsStateWithLifecycle()
     var confirmClear by remember { mutableStateOf(false) }
 
     if (confirmClear) {
         AlertDialog(
             onDismissRequest = { confirmClear = false },
-            title = { Text(context.getString(R.string.history_clear)) },
-            text = { Text(context.getString(R.string.history_clear_confirm)) },
+            title = { Text(resources.getString(R.string.history_clear)) },
+            text = { Text(resources.getString(R.string.history_clear_confirm)) },
             confirmButton = {
                 TextButton(
                     onClick = {
                         confirmClear = false
                         viewModel.clearHistory()
                     },
-                ) { Text(context.getString(R.string.action_ok)) }
+                ) { Text(resources.getString(R.string.action_ok)) }
             },
             dismissButton = {
                 TextButton(onClick = { confirmClear = false }) {
-                    Text(context.getString(R.string.action_cancel))
+                    Text(resources.getString(R.string.action_cancel))
                 }
             },
         )
@@ -77,14 +79,14 @@ fun HistoryScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = context.getString(R.string.library_count, history.size),
+                text = resources.getString(R.string.library_count, history.size),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
             )
             if (history.isNotEmpty()) {
                 TextButton(onClick = { confirmClear = true }) {
-                    Text(context.getString(R.string.history_clear))
+                    Text(resources.getString(R.string.history_clear))
                 }
             }
         }
@@ -93,7 +95,7 @@ fun HistoryScreen(
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 EmptyState(
                     icon = Icons.Outlined.History,
-                    title = context.getString(R.string.history_empty),
+                    title = resources.getString(R.string.history_empty),
                 )
             }
         } else {
@@ -128,7 +130,7 @@ fun HistoryScreen(
                             IconButton(onClick = { viewModel.removeHistory(item.uri) }) {
                                 Icon(
                                     imageVector = Icons.Outlined.Delete,
-                                    contentDescription = context.getString(R.string.history_remove),
+                                    contentDescription = resources.getString(R.string.history_remove),
                                 )
                             }
                         },

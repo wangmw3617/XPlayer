@@ -87,8 +87,8 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml') }}
           restore-keys: gradle-${{ runner.os }}-
 
-      - name: Run unit tests
-        run: ./gradlew testDebugUnitTest --no-daemon --stacktrace
+      - name: Run unit tests and Android lint
+        run: ./gradlew testDebugUnitTest lintDebug --no-daemon --stacktrace
 
       - name: Upload test report
         if: failure()
@@ -96,6 +96,15 @@ jobs:
         with:
           name: unit-test-report
           path: app/build/reports/tests/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Upload lint report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-lint-report
+          path: app/build/reports/lint-results-debug.html
           retention-days: 7
           if-no-files-found: ignore
 

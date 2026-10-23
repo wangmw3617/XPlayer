@@ -6,14 +6,12 @@ import com.zhiwei.xplayer.core.data.LibraryRepository
 import com.zhiwei.xplayer.core.data.db.FolderEntity
 import com.zhiwei.xplayer.core.data.db.HistoryEntity
 import com.zhiwei.xplayer.core.data.db.PlaylistEntity
-import com.zhiwei.xplayer.core.media.MediaEntry
+import com.zhiwei.xplayer.core.media.MediaCatalogState
 import com.zhiwei.xplayer.core.media.MediaRepository
 import com.zhiwei.xplayer.core.media.SafBrowser
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -30,20 +28,7 @@ class LibraryViewModel @Inject constructor(
     private val libraryRepository: LibraryRepository,
 ) : ViewModel() {
 
-    private val _videos = MutableStateFlow<List<MediaEntry>>(emptyList())
-    val videos: StateFlow<List<MediaEntry>> = _videos.asStateFlow()
-
-    private val _audio = MutableStateFlow<List<MediaEntry>>(emptyList())
-    val audio: StateFlow<List<MediaEntry>> = _audio.asStateFlow()
-
-    private val _loading = MutableStateFlow(false)
-    val loading: StateFlow<Boolean> = _loading.asStateFlow()
-
-    private val _scanned = MutableStateFlow(false)
-    val scanned: StateFlow<Boolean> = _scanned.asStateFlow()
-
-    private val _permissionGranted = MutableStateFlow(mediaRepository.hasMediaPermission())
-    val permissionGranted: StateFlow<Boolean> = _permissionGranted.asStateFlow()
+    val catalog: StateFlow<MediaCatalogState> = mediaRepository.catalog
 
     val history: StateFlow<List<HistoryEntity>> = libraryRepository.history
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -60,24 +45,17 @@ class LibraryViewModel @Inject constructor(
     /** 需要申请哪些权限（分版本） */
     fun requiredPermissions(): Array<String> = mediaRepository.requiredReadPermissions()
 
-    /** 权限回调后调用：重新判断并触发一次扫描 */
+    /** 已授权音频、只需补视频权限时使用。 */
+    fun requiredVideoPermissions(): Array<String> = mediaRepository.requiredVideoPermissions()
+
+    /** 首次进入时复用应用级扫描结果，不会因为首页和媒体库各有一个 VM 就扫两遍。 */
+    fun ensureLoaded() {
+        viewModelScope.launch { mediaRepository.refresh(force = false) }
+    }
+
+    /** 权限变化后强制重新读取，保证视频和音频权限分别生效。 */
     fun refresh() {
-        _permissionGranted.value = mediaRepository.hasMediaPermission()
-        if (!_permissionGranted.value) {
-            _videos.value = emptyList()
-            _audio.value = emptyList()
-            _scanned.value = true
-            return
-        }
-        viewModelScope.launch {
-            _loading.value = true
-            val videos = mediaRepository.loadVideos()
-            val audio = mediaRepository.loadAudio()
-            _videos.value = videos
-            _audio.value = audio
-            _loading.value = false
-            _scanned.value = true
-        }
+        viewModelScope.launch { mediaRepository.refresh(force = true) }
     }
 
     fun clearHistory() = viewModelScope.launch { libraryRepository.clearHistory() }

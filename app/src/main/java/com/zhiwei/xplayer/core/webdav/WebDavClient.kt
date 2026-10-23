@@ -1,17 +1,24 @@
 package com.zhiwei.xplayer.core.webdav
 
+import android.net.Uri
 import android.util.Xml
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.Credentials
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.xmlpull.v1.XmlPullParser
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
  * 一个极瘦的 WebDAV 客户端。
@@ -61,6 +68,7 @@ class WebDavClient(
 
         private const val DEPTH_HEADER = "Depth"
         private val XML_MEDIA_TYPE = "application/xml; charset=utf-8".toMediaType()
+        private val HTTP_200_PATTERN = Regex("""(?:^|\s)200(?:\s|$)""")
 
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             // 列目录慢一点可以忍，但不能无限等 —— 否则界面会一直转圈
@@ -80,7 +88,7 @@ class WebDavClient(
 
     /** 探测账号是否可用；顺带把 base 路径标准化。返回根目录下的条目。 */
     suspend fun list(path: String = "/"): List<DavEntry> = withContext(Dispatchers.IO) {
-        cache[path]?.let { return@withContext it }
+        synchronized(cache) { cache[path] }?.let { return@withContext it }
 
         val request = Request.Builder()
             .url(buildUrl(path))
@@ -91,14 +99,16 @@ class WebDavClient(
             .build()
 
         val entries = try {
-            client.newCall(request).execute().use { response ->
+            execute(request).use { response ->
                 when {
                     response.code == 401 -> throw DavException("认证失败，请检查用户名与密码")
                     response.code == 404 -> throw DavException("路径不存在：$path")
                     response.code == 405 -> throw DavException("服务端不支持 WebDAV（PROPFIND 被拒绝）")
                     !response.isSuccessful ->
                         throw DavException("服务端返回 ${response.code}")
-                    else -> parseMultiStatus(response.body.byteStream(), path)
+                    else -> withContext(Dispatchers.Default) {
+                        parseMultiStatus(response.body.byteStream(), path)
+                    }
                 }
             }
         } catch (e: DavException) {
@@ -107,16 +117,44 @@ class WebDavClient(
             throw DavException("网络错误：${e.message ?: "连接失败"}", e)
         }
 
-        // 记缓存（超限就把最旧的丢掉）
-        if (cache.size >= cacheLimit) {
-            cache.keys.firstOrNull()?.let { cache.remove(it) }
+        synchronized(cache) {
+            if (cache.size >= cacheLimit) {
+                cache.keys.firstOrNull()?.let { cache.remove(it) }
+            }
+            cache[path] = entries
         }
-        cache[path] = entries
         entries
     }
 
     /** 清掉缓存。用户手动刷新，或者改完账号配置之后调用。 */
-    fun invalidate() = cache.clear()
+    fun invalidate() {
+        synchronized(cache) { cache.clear() }
+    }
+
+    /**
+     * OkHttp 的阻塞 execute 不响应协程取消。这里用 enqueue，取消时直接 cancel Call，
+     * 快速切换目录时旧请求会真正断开，而不是只在 UI 层丢弃结果。
+     */
+    private suspend fun execute(request: Request): Response =
+        suspendCancellableCoroutine { continuation ->
+            val call = client.newCall(request)
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(
+                object : Callback {
+                    override fun onFailure(call: Call, e: IOException) {
+                        if (!continuation.isCancelled) continuation.resumeWithException(e)
+                    }
+
+                    override fun onResponse(call: Call, response: Response) {
+                        if (continuation.isActive) {
+                            continuation.resume(response)
+                        } else {
+                            response.close()
+                        }
+                    }
+                },
+            )
+        }
 
     /**
      * 拼出可以直接播放的 URL。
@@ -198,6 +236,8 @@ class WebDavClient(
 
         val result = mutableListOf<DavEntry>()
         var inResponse = false
+        var inPropStat = false
+        var inProp = false
         var propStatOk = false
         var href: String? = null
         var name: String? = null
@@ -205,12 +245,17 @@ class WebDavClient(
         var size = 0L
         var modified: String? = null
         var contentType: String? = null
+        var pendingName: String? = null
+        var pendingCollection = false
+        var pendingSize = 0L
+        var pendingModified: String? = null
+        var pendingContentType: String? = null
 
-        val requested = normalizeHref(requestedPath).trimEnd('/').ifEmpty { "/" }
+        val requested = requestedPath.trimEnd('/').ifEmpty { "/" }
 
         fun flush() {
             val rawHref = href ?: return
-            val path = normalizeHref(rawHref)
+            val path = normalizeHref(rawHref, requestedPath)
             // 跳过请求目录自身。用「归一化后是否等于请求路径」判断，
             // 而不是比深度：深度算法在服务端 href 前缀与账号 base 不一致时会错，
             // 可能把真正的子项也一起滤掉。
@@ -227,6 +272,23 @@ class WebDavClient(
             )
         }
 
+        fun resetPendingProperties() {
+            pendingName = null
+            pendingCollection = false
+            pendingSize = 0L
+            pendingModified = null
+            pendingContentType = null
+        }
+
+        fun applyPendingProperties() {
+            if (!propStatOk) return
+            name = pendingName ?: name
+            isCollection = isCollection || pendingCollection
+            if (pendingSize > 0L) size = pendingSize
+            modified = pendingModified ?: modified
+            contentType = pendingContentType ?: contentType
+        }
+
         var event = parser.eventType
         while (event != XmlPullParser.END_DOCUMENT) {
             when (event) {
@@ -235,37 +297,52 @@ class WebDavClient(
                 XmlPullParser.START_TAG -> when (parser.name) {
                     "response" -> {
                         inResponse = true
-                        // status 在 XML 里通常出现在 prop 之后，所以先默认「可接受」，
-                        // 真的读到 404 之类的 propstat 时再关掉。
-                        // 若各字段都在同一个 propstat 里（绝大多数服务端如此），
-                        // 这个默认值就等价于「只看唯一那个 propstat」。
-                        propStatOk = true
+                        inPropStat = false
+                        inProp = false
+                        propStatOk = false
                         href = null; name = null; isCollection = false
                         size = 0L; modified = null; contentType = null
+                        resetPendingProperties()
                     }
-                    "href" -> if (inResponse) href = parser.nextText().trim()
-                    "status" -> if (inResponse) {
-                        // 同一 response 里可能出现多个 propstat：200 的那个有属性，
-                        // 404 的那个属性是空的。一旦看到非 200，就认定当前 propstat
-                        // 不可信；后续若再出现 200，会被重新打开。
-                        val text = parser.nextText()
-                        propStatOk = text.contains(" 200 ")
+                    "href" -> if (inResponse && !inPropStat) {
+                        href = parser.nextText().trim()
                     }
-                    "collection" -> if (inResponse && propStatOk) isCollection = true
-                    "displayname" -> if (inResponse && propStatOk) name = parser.nextText().trim()
-                    "getcontentlength" -> if (inResponse && propStatOk) {
-                        size = parser.nextText().trim().toLongOrNull() ?: 0L
+                    "propstat" -> if (inResponse) {
+                        inPropStat = true
+                        inProp = false
+                        propStatOk = false
+                        resetPendingProperties()
                     }
-                    "getlastmodified" -> if (inResponse && propStatOk) {
-                        modified = parser.nextText().trim()
+                    "prop" -> if (inPropStat) inProp = true
+                    "status" -> if (inPropStat) {
+                        propStatOk = HTTP_200_PATTERN.containsMatchIn(parser.nextText())
                     }
-                    "getcontenttype" -> if (inResponse && propStatOk) {
-                        contentType = parser.nextText().trim()
+                    "collection" -> if (inProp) pendingCollection = true
+                    "displayname" -> if (inProp) {
+                        pendingName = parser.nextText().trim()
+                    }
+                    "getcontentlength" -> if (inProp) {
+                        pendingSize = parser.nextText().trim().toLongOrNull() ?: 0L
+                    }
+                    "getlastmodified" -> if (inProp) {
+                        pendingModified = parser.nextText().trim()
+                    }
+                    "getcontenttype" -> if (inProp) {
+                        pendingContentType = parser.nextText().trim()
                     }
                 }
-                XmlPullParser.END_TAG -> if (parser.name == "response") {
-                    if (inResponse) flush()
-                    inResponse = false
+                XmlPullParser.END_TAG -> when (parser.name) {
+                    "prop" -> inProp = false
+                    "propstat" -> if (inPropStat) {
+                        applyPendingProperties()
+                        inPropStat = false
+                        inProp = false
+                        propStatOk = false
+                    }
+                    "response" -> if (inResponse) {
+                        flush()
+                        inResponse = false
+                    }
                 }
             }
             event = parser.next()
@@ -283,14 +360,13 @@ class WebDavClient(
      * 还要 URL 解码 —— 服务端返回的 href 是按 RFC 编码过的，
      * 中文文件名会是 `%E7%94%B5%E5%BD%B1`，不解码界面上就是一串百分号。
      */
-    private fun normalizeHref(href: String): String {
-        var path = href
-        // 去掉 scheme://host
-        val schemeIdx = path.indexOf("://")
-        if (schemeIdx >= 0) {
-            val slash = path.indexOf('/', schemeIdx + 3)
-            path = if (slash >= 0) path.substring(slash) else "/"
-        }
+    private fun normalizeHref(href: String, requestedPath: String): String {
+        // 少数服务端会返回相对 href。此时必须相对「当前请求目录」解析；
+        // 若错误地相对账号根目录解析，子目录中的文件会被拼到错误路径。
+        val requestBase = buildUrl(requestedPath).trimEnd('/') + "/"
+        val resolved = requestBase.toHttpUrlOrNull()?.resolve(href)
+        var path = resolved?.encodedPath
+            ?: href.substringBefore('?').substringBefore('#')
         path = decode(path)
         // 再去掉账号 base 里的路径前缀。
         // 必须校验「段边界」：base 是 `/dav`、href 是 `/davos/x` 时，
@@ -306,8 +382,7 @@ class WebDavClient(
         return path
     }
 
-    private fun decode(value: String): String =
-        runCatching { java.net.URLDecoder.decode(value, "UTF-8") }.getOrDefault(value)
+    private fun decode(value: String): String = Uri.decode(value)
 
     private fun basePathOf(url: String): String {
         val uri = runCatching { java.net.URI(url) }.getOrNull() ?: return ""

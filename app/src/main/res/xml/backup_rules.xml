@@ -6,10 +6,4 @@
     <include
         domain="database"
         path="." />
-    <exclude
-        domain="file"
-        path="logs" />
-    <exclude
-        domain="file"
-        path="screenshots" />
 </full-backup-content>

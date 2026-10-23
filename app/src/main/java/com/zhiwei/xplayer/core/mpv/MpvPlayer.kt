@@ -73,6 +73,13 @@ class MpvPlayer @Inject constructor(
     private val _ended = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
     val ended: SharedFlow<Unit> = _ended.asSharedFlow()
 
+    /** 新文件已经完成加载，队列据此忽略切换文件时旧文件的 END_FILE。 */
+    private val _fileLoaded = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
+    val fileLoaded: SharedFlow<Unit> = _fileLoaded.asSharedFlow()
+
+    @Volatile
+    private var configuredLoopMode = 0
+
     /**
      * 当前 mpv 实例。
      *
@@ -451,10 +458,12 @@ class MpvPlayer @Inject constructor(
     /** 0 不循环 / 1 列表循环 / 2 单曲循环 */
     fun setLoopMode(mode: Int) {
         if (!initialized) return
+        configuredLoopMode = mode.coerceIn(0, 2)
         runCatching {
-            when (mode) {
+            when (configuredLoopMode) {
                 1 -> {
-                    mpv?.setPropertyString("loop-playlist", "inf")
+                    // 列表循环由应用级队列负责，mpv 内部只保留当前文件。
+                    mpv?.setPropertyString("loop-playlist", "no")
                     mpv?.setPropertyString("loop-file", "no")
                 }
                 2 -> {
@@ -466,6 +475,7 @@ class MpvPlayer @Inject constructor(
                     mpv?.setPropertyString("loop-file", "no")
                 }
             }
+            _state.update { it.copy(loopMode = configuredLoopMode) }
         }
     }
 
@@ -559,6 +569,7 @@ class MpvPlayer @Inject constructor(
                 refreshTracks()
                 refreshVideoParams()
                 _state.update { it.copy(idle = false, error = null, eofReached = false) }
+                _fileLoaded.tryEmit(Unit)
                 // 外部字幕要等文件就绪后再追加：否则会与自动加载的同名字幕互相顶掉
                 val pending = pendingSubtitles
                 pendingSubtitles = emptyList()
@@ -689,12 +700,7 @@ class MpvPlayer @Inject constructor(
 
     private fun readLoopMode(): Int {
         val file = runCatching { mpv?.getPropertyString("loop-file") }.getOrNull()
-        val list = runCatching { mpv?.getPropertyString("loop-playlist") }.getOrNull()
-        return when {
-            file == "inf" -> 2
-            list == "inf" -> 1
-            else -> 0
-        }
+        return if (file == "inf") 2 else configuredLoopMode
     }
 
     /** 给 UI 的即时提示通道 */

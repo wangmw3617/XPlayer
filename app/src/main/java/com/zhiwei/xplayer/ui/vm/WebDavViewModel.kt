@@ -1,15 +1,23 @@
 package com.zhiwei.xplayer.ui.vm
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.zhiwei.xplayer.R
 import com.zhiwei.xplayer.core.webdav.DavAccount
 import com.zhiwei.xplayer.core.webdav.DavEntry
 import com.zhiwei.xplayer.core.webdav.WebDavClient
 import com.zhiwei.xplayer.core.webdav.WebDavRepository
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -33,6 +41,7 @@ data class DavBrowseState(
  */
 @HiltViewModel
 class WebDavViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val repository: WebDavRepository,
 ) : ViewModel() {
 
@@ -46,20 +55,51 @@ class WebDavViewModel @Inject constructor(
     private val _account = MutableStateFlow<DavAccount?>(null)
     val account: StateFlow<DavAccount?> = _account.asStateFlow()
 
+    private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val messages: SharedFlow<String> = _messages.asSharedFlow()
+
     private var client: WebDavClient? = null
+    private var loadJob: Job? = null
+    private var loadGeneration = 0L
 
     fun addAccount(account: DavAccount) {
-        viewModelScope.launch { repository.add(account) }
+        viewModelScope.launch {
+            try {
+                repository.add(account)
+                openAccount(account)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                _messages.tryEmit(
+                    context.getString(
+                        R.string.webdav_save_failed,
+                        error.message ?: context.getString(R.string.webdav_unknown_error),
+                    ),
+                )
+            }
+        }
     }
 
     fun removeAccount(account: DavAccount) {
         viewModelScope.launch {
-            repository.remove(account)
-            // 删掉的正好是当前账号，就退回未选状态
-            if (_account.value == account) {
-                _account.value = null
-                client = null
-                _state.value = DavBrowseState()
+            try {
+                repository.remove(account)
+                // 删掉的正好是当前账号，就退回未选状态
+                if (_account.value == account) {
+                    loadJob?.cancel()
+                    _account.value = null
+                    client = null
+                    _state.value = DavBrowseState()
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                _messages.tryEmit(
+                    context.getString(
+                        R.string.webdav_remove_failed,
+                        error.message ?: context.getString(R.string.webdav_unknown_error),
+                    ),
+                )
             }
         }
     }
@@ -93,22 +133,25 @@ class WebDavViewModel @Inject constructor(
 
     private fun load(path: String) {
         val active = client ?: return
-        viewModelScope.launch {
+        loadJob?.cancel()
+        val generation = ++loadGeneration
+        loadJob = viewModelScope.launch {
             _state.value = _state.value.copy(loading = true, error = null)
-            val result = runCatching { active.list(path) }
-            _state.value = result.fold(
-                onSuccess = { entries ->
-                    DavBrowseState(loading = false, path = path, entries = entries)
-                },
-                onFailure = { error ->
-                    DavBrowseState(
-                        loading = false,
-                        path = path,
-                        entries = emptyList(),
-                        error = error.message ?: "加载失败",
-                    )
-                },
-            )
+            try {
+                val entries = active.list(path)
+                if (generation != loadGeneration || client !== active) return@launch
+                _state.value = DavBrowseState(loading = false, path = path, entries = entries)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                if (generation != loadGeneration || client !== active) return@launch
+                _state.value = DavBrowseState(
+                    loading = false,
+                    path = path,
+                    entries = emptyList(),
+                    error = error.message ?: "加载失败",
+                )
+            }
         }
     }
 

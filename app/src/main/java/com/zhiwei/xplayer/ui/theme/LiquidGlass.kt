@@ -62,16 +62,14 @@ fun rememberAppBackdrop(): LayerBackdrop = rememberLayerBackdrop()
 /**
  * 应用背景层，同时也是玻璃的采样源。
  *
- * 它铺满全屏，并把 [content] 一起纳入采样范围 —— 这样页面内容滚到玻璃条下面时，
- * 玻璃能真的把它糊掉，而不是只糊一层背景色。
+ * 只把静态背景纳入采样范围。旧实现把整页内容一起录制，列表滚动时 Compose 需要反复
+ * 重录全屏离屏图层；视觉差异很小，却会稳定吃掉滚动帧率。玻璃现在采样渐变背景，
+ * 页面内容仍正常绘制在它上面。
  *
  * @param sampling 是否把内容录进 [backdrop] 供玻璃采样。
  *
- *   **播放页必须传 false。** `layerBackdrop` 会把整棵子树录进一个 `GraphicsLayer`
- *   （见库里的 `recordLayer`），而这个录制是**全屏离屏渲染**；只要子树里有任何东西
- *   变化，整层就要重录。播放页上进度文本每秒变几十次，于是每帧都在做一次全屏离屏
- *   渲染 —— 而播放页根本没有人消费这份录制结果（底栏在播放页不显示，播放页自己的
- *   玻璃也采样不到 SurfaceView）。纯粹白烧。
+ *   **播放页必须传 false。** 播放页不显示底栏，也没有其他消费者；关闭采样可省掉
+ *   一份完全无用的图层。播放页自己的控制面板使用轻量静态玻璃，不依赖 backdrop。
  */
 @Composable
 fun AppBackground(
@@ -81,9 +79,15 @@ fun AppBackground(
     content: @Composable () -> Unit,
 ) {
     val base = modifier.fillMaxSize()
-    Box(if (sampling) base.layerBackdrop(backdrop) else base) {
+    Box(base) {
         // 播放页会铺自己的纯黑背景，这层色斑画了也看不见
-        if (sampling) BackgroundGlow()
+        if (sampling) {
+            BackgroundGlow(
+                Modifier
+                    .fillMaxSize()
+                    .layerBackdrop(backdrop),
+            )
+        }
         content()
     }
 }
@@ -100,7 +104,7 @@ fun AppBackground(
  * 色斑必须很淡 —— 它唯一的作用是给玻璃提供「可被模糊出层次」的像素。
  */
 @Composable
-private fun BackgroundGlow() {
+private fun BackgroundGlow(modifier: Modifier = Modifier) {
     val dark = isSystemInDarkTheme()
     val scheme = MaterialTheme.colorScheme
     val base = scheme.surfaceContainerLow
@@ -109,7 +113,7 @@ private fun BackgroundGlow() {
     val alphaA = if (dark) 0.32f else 0.17f
     val alphaB = if (dark) 0.22f else 0.12f
 
-    Canvas(Modifier.fillMaxSize()) {
+    Canvas(modifier.fillMaxSize()) {
         drawRect(base)
         drawRect(
             brush = Brush.radialGradient(

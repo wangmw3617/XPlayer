@@ -11,7 +11,10 @@ import com.zhiwei.xplayer.core.mpv.MpvPlayer
 import com.zhiwei.xplayer.core.mpv.PlaybackSource
 import com.zhiwei.xplayer.core.mpv.PlayerState
 import com.zhiwei.xplayer.core.playback.PlaybackRecorder
+import com.zhiwei.xplayer.core.playback.PlaybackQueueController
+import com.zhiwei.xplayer.core.playback.PlaybackQueueState
 import com.zhiwei.xplayer.core.playback.PlaybackService
+import com.zhiwei.xplayer.core.webdav.DavAccount
 import com.zhiwei.xplayer.core.webdav.WebDavRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -43,6 +46,7 @@ class PlayerViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val webDavRepository: WebDavRepository,
     private val recorder: PlaybackRecorder,
+    private val queueController: PlaybackQueueController,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
@@ -62,8 +66,13 @@ class PlayerViewModel @Inject constructor(
     val log: SharedFlow<String> = player.log
     val messages: SharedFlow<String> = player.messages
     val settings: StateFlow<AppSettings> = settingsRepository.settings
+    val queueState: StateFlow<PlaybackQueueState> = queueController.state
 
-    fun play(source: PlaybackSource) {
+    fun play(
+        source: PlaybackSource,
+        queue: List<PlaybackSource> = listOf(source),
+        index: Int = 0,
+    ) {
         viewModelScope.launch {
             // WebDAV 的 uri 不带凭据（避免密码落盘/上屏），所以从历史重播时
             // 这里要把对应账号的 Authorization 头补回去，否则必然 401。
@@ -72,6 +81,9 @@ class PlayerViewModel @Inject constructor(
             } else {
                 source
             }
+            val requestedQueue = queue.ifEmpty { listOf(source) }
+            val safeIndex = index.coerceIn(0, requestedQueue.lastIndex)
+            val effectiveQueue = requestedQueue.toMutableList().also { it[safeIndex] = effective }
             val resumeFrom = if (settingsRepository.current.rememberPosition) {
                 val saved = libraryRepository.findHistory(effective.uri)?.positionMs ?: 0L
                 // 刚开头几秒就不续播了，否则「继续观看」会变成「重看开头」
@@ -79,15 +91,11 @@ class PlayerViewModel @Inject constructor(
             } else {
                 0L
             }
-            recorder.onPlaybackStarted()
-            player.play(effective, resumeFrom)
-            // 先落一条「开始播放」的记录，让首页的「继续观看」立刻能看到这个媒体
-            libraryRepository.recordPlayback(
-                uri = effective.uri,
-                title = effective.title,
-                isNetwork = effective.isNetwork,
-                positionMs = resumeFrom,
-                durationMs = 0L,
+            queueController.play(
+                source = effective,
+                queue = effectiveQueue,
+                index = safeIndex,
+                startMs = resumeFrom,
             )
             if (settingsRepository.current.backgroundPlayback) {
                 PlaybackService.start(context)
@@ -98,8 +106,8 @@ class PlayerViewModel @Inject constructor(
     /**
      * 给一个网络源补上 WebDAV 的 Basic 认证头。
      *
-     * 匹配规则是「哪个账号的 base URL 是这个 uri 的前缀」，命中第一个就够 ——
-     * 同一个服务器配置了多个账号是极少见的场景，真发生时用先添加的那个。
+     * 匹配规则由 [DavAccount.owns] 负责，要求协议、主机、端口和路径段边界全部一致。
+     * 找不到匹配账号（普通 http 流、账号已被删）就原样返回。
      * 找不到匹配账号（普通 http 流、账号已被删）就原样返回。
      */
     private suspend fun attachWebDavAuth(source: PlaybackSource): PlaybackSource {
@@ -128,6 +136,18 @@ class PlayerViewModel @Inject constructor(
         recorder.flush()
     }
 
+    fun next() {
+        queueController.next()
+    }
+
+    fun previous() {
+        queueController.previous()
+    }
+
+    fun setLoopMode(mode: Int) {
+        queueController.setLoopMode(mode)
+    }
+
     fun screenshot() {
         val path = player.screenshot()
         player.notify(
@@ -140,8 +160,7 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun stopPlayback() {
-        recorder.flush()
-        player.stop()
+        queueController.stop()
         PlaybackService.stop(context)
     }
 

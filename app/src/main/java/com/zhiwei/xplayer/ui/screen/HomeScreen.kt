@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Cloud
@@ -39,9 +40,11 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zhiwei.xplayer.R
+import com.zhiwei.xplayer.core.media.MediaAccess
 import com.zhiwei.xplayer.core.media.MediaEntry
 import com.zhiwei.xplayer.core.mpv.PlaybackSource
 import com.zhiwei.xplayer.core.util.Formatters
+import com.zhiwei.xplayer.ui.components.rememberResources
 import com.zhiwei.xplayer.ui.components.EmptyState
 import com.zhiwei.xplayer.ui.components.GlassCard
 import com.zhiwei.xplayer.ui.components.InfoRow
@@ -65,14 +68,19 @@ val BOTTOM_BAR_RESERVE = 108.dp
 fun HomeScreen(
     onOpen: (Any) -> Unit,
     onPlay: (PlaybackSource) -> Unit,
+    onPlayQueue: (List<PlaybackSource>, Int) -> Unit = { queue, index ->
+        queue.getOrNull(index)?.let(onPlay)
+    },
     viewModel: LibraryViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
-    val videos by viewModel.videos.collectAsStateWithLifecycle()
-    val audio by viewModel.audio.collectAsStateWithLifecycle()
+    val resources = rememberResources()
+    val catalog by viewModel.catalog.collectAsStateWithLifecycle()
     val recent by viewModel.recentHistory.collectAsStateWithLifecycle()
-    val permissionGranted by viewModel.permissionGranted.collectAsStateWithLifecycle()
-    val loading by viewModel.loading.collectAsStateWithLifecycle()
+    val videos = catalog.videos
+    val audio = catalog.audio
+    val permissionGranted = catalog.hasAnyAccess
+    val loading = catalog.loading
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -87,9 +95,9 @@ fun HomeScreen(
         )
     }
 
-    // 首次进入且已有权限就直接扫一遍；没权限等用户点授权
-    LaunchedEffect(permissionGranted) {
-        if (permissionGranted) viewModel.refresh()
+    // 首页与媒体库共享应用级结果，最多只触发一次实际扫描。
+    LaunchedEffect(Unit) {
+        viewModel.ensureLoaded()
     }
 
     val media = remember(videos, audio) { videos + audio }
@@ -104,12 +112,12 @@ fun HomeScreen(
             item {
                 GlassCard {
                     Text(
-                        text = context.getString(R.string.home_empty),
+                        text = resources.getString(R.string.home_empty),
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        text = context.getString(R.string.home_empty_desc),
+                        text = resources.getString(R.string.home_empty_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -117,16 +125,69 @@ fun HomeScreen(
                     androidx.compose.material3.Button(
                         onClick = { permissionLauncher.launch(viewModel.requiredPermissions()) },
                     ) {
-                        Text(context.getString(R.string.home_grant))
+                        Text(resources.getString(R.string.home_grant))
                     }
                 }
+            }
+        }
+
+        if (permissionGranted && catalog.videoAccess != MediaAccess.FULL) {
+            item {
+                GlassCard {
+                    Text(
+                        text = resources.getString(
+                            if (catalog.videoAccess == MediaAccess.PARTIAL) {
+                                R.string.home_video_partial
+                            } else {
+                                R.string.home_video_denied
+                            },
+                        ),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = resources.getString(
+                            if (catalog.videoAccess == MediaAccess.PARTIAL) {
+                                R.string.permission_partial_video
+                            } else {
+                                R.string.home_video_denied_desc
+                            },
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    androidx.compose.material3.TextButton(
+                        onClick = { permissionLauncher.launch(viewModel.requiredVideoPermissions()) },
+                    ) {
+                        Text(
+                            resources.getString(
+                                if (catalog.videoAccess == MediaAccess.PARTIAL) {
+                                    R.string.home_adjust_access
+                                } else {
+                                    R.string.home_grant_video
+                                },
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+
+        catalog.error?.let { message ->
+            item {
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
         }
 
         // ---------------------------------------------------------- 继续观看 ----
         if (continueItem != null) {
             item {
-                SectionHeader(title = context.getString(R.string.home_continue))
+                SectionHeader(title = resources.getString(R.string.home_continue))
             }
             item {
                 ContinueCard(
@@ -150,38 +211,38 @@ fun HomeScreen(
 
         // ---------------------------------------------------------- 快捷入口 ----
         item {
-            SectionHeader(title = context.getString(R.string.home_quick))
+            SectionHeader(title = resources.getString(R.string.home_quick))
         }
         item {
             GlassCard(contentPadding = PaddingValues(vertical = 4.dp)) {
                 InfoRow(
                     icon = Icons.Outlined.FolderOpen,
-                    title = context.getString(R.string.home_open_file),
-                    subtitle = context.getString(R.string.home_open_file_desc),
+                    title = resources.getString(R.string.home_open_file),
+                    subtitle = resources.getString(R.string.home_open_file_desc),
                     onClick = { filePicker.launch(MEDIA_MIME_TYPES) },
                 )
                 InfoRow(
                     icon = Icons.Outlined.Podcasts,
-                    title = context.getString(R.string.home_stream),
-                    subtitle = context.getString(R.string.home_stream_desc),
+                    title = resources.getString(R.string.home_stream),
+                    subtitle = resources.getString(R.string.home_stream_desc),
                     onClick = { onOpen(StreamRoute) },
                 )
                 InfoRow(
                     icon = Icons.Outlined.Cloud,
-                    title = context.getString(R.string.home_webdav),
-                    subtitle = context.getString(R.string.home_webdav_desc),
+                    title = resources.getString(R.string.home_webdav),
+                    subtitle = resources.getString(R.string.home_webdav_desc),
                     onClick = { onOpen(WebDavRoute) },
                 )
                 InfoRow(
                     icon = Icons.Outlined.History,
-                    title = context.getString(R.string.home_history),
-                    subtitle = context.getString(R.string.home_history_desc),
+                    title = resources.getString(R.string.home_history),
+                    subtitle = resources.getString(R.string.home_history_desc),
                     onClick = { onOpen(HistoryRoute) },
                 )
                 InfoRow(
                     icon = Icons.Outlined.Terminal,
-                    title = context.getString(R.string.home_log),
-                    subtitle = context.getString(R.string.home_log_desc),
+                    title = resources.getString(R.string.home_log),
+                    subtitle = resources.getString(R.string.home_log_desc),
                     onClick = { onOpen(LogRoute) },
                 )
             }
@@ -191,10 +252,10 @@ fun HomeScreen(
         if (media.isNotEmpty()) {
             item {
                 SectionHeader(
-                    title = context.getString(R.string.home_recent_added),
+                    title = resources.getString(R.string.home_recent_added),
                     trailing = {
                         Text(
-                            text = context.getString(R.string.library_count, media.size),
+                            text = resources.getString(R.string.library_count, media.size),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -202,9 +263,13 @@ fun HomeScreen(
                 )
             }
             item {
+                val recentMedia = media.take(12)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(items = media.take(12), key = { it.uri }) { entry ->
-                        RecentTile(entry = entry, onClick = { onPlay(entry.toSource()) })
+                    itemsIndexed(items = recentMedia, key = { _, item -> item.uri }) { index, entry ->
+                        RecentTile(
+                            entry = entry,
+                            onClick = { onPlayQueue(recentMedia.map { it.toSource() }, index) },
+                        )
                     }
                 }
             }
@@ -212,8 +277,8 @@ fun HomeScreen(
             item {
                 EmptyState(
                     icon = Icons.Outlined.Movie,
-                    title = context.getString(R.string.library_empty),
-                    description = context.getString(R.string.home_empty_desc),
+                    title = resources.getString(R.string.library_empty),
+                    description = resources.getString(R.string.home_empty_desc),
                 )
             }
         }

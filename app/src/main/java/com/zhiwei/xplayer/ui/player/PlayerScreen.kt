@@ -1,7 +1,9 @@
 package com.zhiwei.xplayer.ui.player
 
+import android.content.res.Resources
 import android.app.Activity
 import android.content.pm.ActivityInfo
+import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
 import android.util.Rational
@@ -79,12 +81,14 @@ import com.zhiwei.xplayer.core.mpv.MpvTrack
 import com.zhiwei.xplayer.core.mpv.PlayerState
 import com.zhiwei.xplayer.core.util.Formatters
 import com.zhiwei.xplayer.ui.PendingPlayback
+import com.zhiwei.xplayer.ui.components.rememberResources
 import com.zhiwei.xplayer.ui.components.SUBTITLE_MIME_TYPES
 import com.zhiwei.xplayer.ui.components.findActivity
 import com.zhiwei.xplayer.ui.components.rememberSubtitlePicker
 import com.zhiwei.xplayer.ui.theme.playerGlass
 import com.zhiwei.xplayer.ui.vm.PlayerViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -104,8 +108,14 @@ fun PlayerScreen(
     viewModel: PlayerViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
+    val resources = rememberResources()
     val activity = remember(context) { context.findActivity() }
     val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val queue by viewModel.queueState.collectAsStateWithLifecycle()
+
+    DisposableEffect(activity) {
+        onDispose { disableAutoEnterPip(activity) }
+    }
 
     // ---- 播放状态 ----
     // 观察器把 PlayerState 拆成一组「各自独立失效」的字段。
@@ -147,7 +157,11 @@ fun PlayerScreen(
         PendingPlayback.request.collect { pending ->
             if (pending != null) {
                 PendingPlayback.clear()
-                viewModel.play(pending)
+                viewModel.play(
+                    source = pending.source,
+                    queue = pending.queue,
+                    index = pending.index,
+                )
             }
         }
     }
@@ -160,6 +174,20 @@ fun PlayerScreen(
         }
         onDispose {
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    // ------------------------------------------------------------ 亮度 ----
+    // 手势只改当前窗口亮度；退出播放页要恢复进入前的原值，不能影响其它页面。
+    DisposableEffect(activity) {
+        val window = activity?.window
+        val originalBrightness = window?.attributes?.screenBrightness ?: -1f
+        onDispose {
+            if (window != null) {
+                val attributes = window.attributes
+                attributes.screenBrightness = originalBrightness
+                window.attributes = attributes
+            }
         }
     }
 
@@ -246,9 +274,9 @@ fun PlayerScreen(
                     detectTapGestures(
                         onTap = { controlsVisible = !controlsVisible },
                         onLongPress = {
+                            speedBeforeBoost = gestureSource.value.speed
                             viewModel.player.setSpeed(longPressSpeed)
                             boosted = true
-                            speedBeforeBoost = gestureSource.value.speed
                             hint = "${Formatters.speed(longPressSpeed)} 快进中"
                         },
                         onPress = {
@@ -268,7 +296,7 @@ fun PlayerScreen(
                     var total = Offset.Zero
                     var startPosition = 0L
                     var lastSeekAt = 0L
-                    var brightness = 0.5f
+                    var brightness = readBrightness(activity)
                     var volume = 0f
 
                     detectTransformGestures(
@@ -378,9 +406,11 @@ fun PlayerScreen(
                 paused = { player.paused },
                 speed = { player.speed },
                 loopMode = { player.loopMode },
+                canPrevious = queue.hasPrevious,
+                canNext = queue.hasNext,
                 onTogglePlay = viewModel::togglePlayPause,
-                onPrevious = { viewModel.player.previous() },
-                onNext = { viewModel.player.next() },
+                onPrevious = viewModel::previous,
+                onNext = viewModel::next,
                 onSeekBy = { delta -> viewModel.player.seekBy(delta) },
                 onSeekTo = { position -> viewModel.player.seekTo(position) },
                 onOpenSheet = { sheet = it },
@@ -396,24 +426,52 @@ fun PlayerScreen(
     // 面板只在打开时组合，且需要整份快照（轨道列表等），所以这里才读整份 state。
     val activeSheet = sheet
     if (activeSheet != null) {
-        val snapshot = viewModel.player.state.value
-        OptionSheet(
-            title = sheetTitle(context, activeSheet),
-            options = sheetOptions(
-                kind = activeSheet,
-                state = snapshot,
-                player = viewModel.player,
-                currentAspect = aspect,
-                onAspectChange = { aspect = it },
-                onLoadSubtitle = { subtitlePicker.launch(SUBTITLE_MIME_TYPES) },
-                onDismiss = { sheet = null },
-            ),
+        PlayerOptionsSheet(
+            kind = activeSheet,
+            state = viewModel.player.state,
+            player = viewModel.player,
+            currentAspect = aspect,
+            onAspectChange = { aspect = it },
+            onLoadSubtitle = { subtitlePicker.launch(SUBTITLE_MIME_TYPES) },
+            onLoopModeChange = viewModel::setLoopMode,
             onDismiss = { sheet = null },
         )
     }
 }
 
 // ========================================================== 独立状态层 ====
+
+/**
+ * 选项面板独立订阅完整播放状态，避免把高频快照扩散到播放页的组合作用域。
+ */
+@Composable
+private fun PlayerOptionsSheet(
+    kind: PlayerSheet,
+    state: StateFlow<PlayerState>,
+    player: MpvPlayer,
+    currentAspect: String,
+    onAspectChange: (String) -> Unit,
+    onLoadSubtitle: () -> Unit,
+    onLoopModeChange: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val snapshot by state.collectAsStateWithLifecycle()
+    val resources = rememberResources()
+    OptionSheet(
+        title = sheetTitle(resources, kind),
+        options = sheetOptions(
+            kind = kind,
+            state = snapshot,
+            player = player,
+            currentAspect = currentAspect,
+            onAspectChange = onAspectChange,
+            onLoadSubtitle = onLoadSubtitle,
+            onLoopModeChange = onLoopModeChange,
+            onDismiss = onDismiss,
+        ),
+        onDismiss = onDismiss,
+    )
+}
 
 /**
  * 缓冲转圈。
@@ -462,7 +520,7 @@ private fun GestureHint(
 private fun ErrorBanner(message: () -> String?, modifier: Modifier = Modifier) {
     val text = message() ?: return
     Text(
-        text = LocalContext.current.getString(R.string.player_error, text),
+        text = rememberResources().getString(R.string.player_error, text),
         color = Color.White,
         style = MaterialTheme.typography.bodySmall,
         modifier = modifier
@@ -566,6 +624,8 @@ private fun PlayerControlPanel(
     paused: () -> Boolean,
     speed: () -> Float,
     loopMode: () -> Int,
+    canPrevious: Boolean,
+    canNext: Boolean,
     onTogglePlay: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
@@ -577,6 +637,7 @@ private fun PlayerControlPanel(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val resources = rememberResources()
 
     Column(
         modifier = modifier
@@ -598,6 +659,8 @@ private fun PlayerControlPanel(
         TransportRow(
             paused = paused,
             enabled = hasMedia,
+            canPrevious = canPrevious,
+            canNext = canNext,
             onTogglePlay = onTogglePlay,
             onPrevious = onPrevious,
             onNext = onNext,
@@ -608,7 +671,6 @@ private fun PlayerControlPanel(
         FeatureRow(
             speed = speed,
             loopMode = loopMode,
-            context = context,
             onOpenSheet = onOpenSheet,
             onScreenshot = onScreenshot,
             onEnterPip = onEnterPip,
@@ -673,30 +735,33 @@ private fun ProgressRow(
 private fun TransportRow(
     paused: () -> Boolean,
     enabled: () -> Boolean,
+    canPrevious: Boolean,
+    canNext: Boolean,
     onTogglePlay: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onSeekBy: (Long) -> Unit,
 ) {
     val context = LocalContext.current
+    val resources = rememberResources()
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onPrevious, enabled = enabled()) {
-            Icon(Icons.Filled.SkipPrevious, contentDescription = context.getString(R.string.player_prev), tint = Color.White)
+        IconButton(onClick = onPrevious, enabled = enabled() && canPrevious) {
+            Icon(Icons.Filled.SkipPrevious, contentDescription = resources.getString(R.string.player_prev), tint = Color.White)
         }
         IconButton(onClick = { onSeekBy(-DEFAULT_SEEK_STEP_MS) }, enabled = enabled()) {
-            Icon(Icons.Filled.Replay10, contentDescription = context.getString(R.string.player_seek_back, 10), tint = Color.White)
+            Icon(Icons.Filled.Replay10, contentDescription = resources.getString(R.string.player_seek_back, 10), tint = Color.White)
         }
         // 播放/暂停是最高频操作，单独包一层：只有 paused 真正翻转时才重组图标。
         PlayPauseButton(paused = paused, onTogglePlay = onTogglePlay)
         IconButton(onClick = { onSeekBy(DEFAULT_SEEK_STEP_MS) }, enabled = enabled()) {
-            Icon(Icons.Filled.Forward10, contentDescription = context.getString(R.string.player_seek_forward, 10), tint = Color.White)
+            Icon(Icons.Filled.Forward10, contentDescription = resources.getString(R.string.player_seek_forward, 10), tint = Color.White)
         }
-        IconButton(onClick = onNext, enabled = enabled()) {
-            Icon(Icons.Filled.SkipNext, contentDescription = context.getString(R.string.player_next), tint = Color.White)
+        IconButton(onClick = onNext, enabled = enabled() && canNext) {
+            Icon(Icons.Filled.SkipNext, contentDescription = resources.getString(R.string.player_next), tint = Color.White)
         }
     }
 }
@@ -714,11 +779,12 @@ private fun TransportRow(
 @Composable
 private fun PlayPauseButton(paused: () -> Boolean, onTogglePlay: () -> Unit) {
     val context = LocalContext.current
+    val resources = rememberResources()
     val isPaused = paused()
     FilledIconButton(onClick = onTogglePlay) {
         Icon(
             imageVector = if (isPaused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
-            contentDescription = context.getString(
+            contentDescription = resources.getString(
                 if (isPaused) R.string.player_play else R.string.player_pause,
             ),
         )
@@ -730,11 +796,11 @@ private fun PlayPauseButton(paused: () -> Boolean, onTogglePlay: () -> Unit) {
 private fun FeatureRow(
     speed: () -> Float,
     loopMode: () -> Int,
-    context: android.content.Context,
     onOpenSheet: (PlayerSheet) -> Unit,
     onScreenshot: () -> Unit,
     onEnterPip: () -> Unit,
 ) {
+    val resources = rememberResources()
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -745,23 +811,23 @@ private fun FeatureRow(
         ControlIcon(Icons.Outlined.Speed, Formatters.speed(speed())) {
             onOpenSheet(PlayerSheet.SPEED)
         }
-        ControlIcon(Icons.Outlined.MusicNote, context.getString(R.string.player_audio_track)) {
+        ControlIcon(Icons.Outlined.MusicNote, resources.getString(R.string.player_audio_track)) {
             onOpenSheet(PlayerSheet.AUDIO_TRACK)
         }
-        ControlIcon(Icons.Outlined.Subtitles, context.getString(R.string.player_sub_track)) {
+        ControlIcon(Icons.Outlined.Subtitles, resources.getString(R.string.player_sub_track)) {
             onOpenSheet(PlayerSheet.SUBTITLE_TRACK)
         }
-        ControlIcon(Icons.Outlined.AspectRatio, context.getString(R.string.player_aspect)) {
+        ControlIcon(Icons.Outlined.AspectRatio, resources.getString(R.string.player_aspect)) {
             onOpenSheet(PlayerSheet.ASPECT)
         }
-        ControlIcon(Icons.Outlined.Loop, context.getString(loopLabelRes(loopMode()))) {
+        ControlIcon(Icons.Outlined.Loop, resources.getString(loopLabelRes(loopMode()))) {
             onOpenSheet(PlayerSheet.LOOP)
         }
-        ControlIcon(Icons.Outlined.Timer, context.getString(R.string.player_sub_delay)) {
+        ControlIcon(Icons.Outlined.Timer, resources.getString(R.string.player_sub_delay)) {
             onOpenSheet(PlayerSheet.SUBTITLE_DELAY)
         }
-        ControlIcon(Icons.Outlined.PhotoCamera, context.getString(R.string.player_screenshot), onScreenshot)
-        ControlIcon(Icons.Outlined.PictureInPictureAlt, context.getString(R.string.player_pip), onEnterPip)
+        ControlIcon(Icons.Outlined.PhotoCamera, resources.getString(R.string.player_screenshot), onScreenshot)
+        ControlIcon(Icons.Outlined.PictureInPictureAlt, resources.getString(R.string.player_pip), onEnterPip)
     }
 }
 
@@ -806,23 +872,45 @@ private fun applyBrightness(activity: Activity?, value: Float) {
 
 private fun enterPip(activity: Activity?, state: PlayerState) {
     val target = activity ?: return
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     val builder = android.app.PictureInPictureParams.Builder()
     if (state.videoWidth > 0 && state.videoHeight > 0) {
         builder.setAspectRatio(Rational(state.videoWidth, state.videoHeight))
     }
-    runCatching { target.enterPictureInPictureMode(builder.build()) }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        val bounds = Rect(0, 0, target.window.decorView.width, target.window.decorView.height)
+        builder.setSourceRectHint(bounds)
+        builder.setAutoEnterEnabled(true)
+    }
+    val params = builder.build()
+    runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            target.setPictureInPictureParams(params)
+        }
+        target.enterPictureInPictureMode(params)
+    }
 }
 
-private fun sheetTitle(context: android.content.Context, kind: PlayerSheet): String = when (kind) {
-    PlayerSheet.SPEED -> context.getString(R.string.player_speed)
-    PlayerSheet.AUDIO_TRACK -> context.getString(R.string.player_audio_track)
-    PlayerSheet.VIDEO_TRACK -> context.getString(R.string.player_video_track)
-    PlayerSheet.SUBTITLE_TRACK -> context.getString(R.string.player_sub_track)
-    PlayerSheet.ASPECT -> context.getString(R.string.player_aspect)
-    PlayerSheet.LOOP -> context.getString(R.string.player_loop)
-    PlayerSheet.SUBTITLE_DELAY -> context.getString(R.string.player_sub_delay)
-    PlayerSheet.AUDIO_DELAY -> context.getString(R.string.player_audio_delay)
+private fun disableAutoEnterPip(activity: Activity?) {
+    val target = activity ?: return
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+    runCatching {
+        target.setPictureInPictureParams(
+            android.app.PictureInPictureParams.Builder()
+                .setAutoEnterEnabled(false)
+                .build(),
+        )
+    }
+}
+
+private fun sheetTitle(resources: Resources, kind: PlayerSheet): String = when (kind) {
+    PlayerSheet.SPEED -> resources.getString(R.string.player_speed)
+    PlayerSheet.AUDIO_TRACK -> resources.getString(R.string.player_audio_track)
+    PlayerSheet.VIDEO_TRACK -> resources.getString(R.string.player_video_track)
+    PlayerSheet.SUBTITLE_TRACK -> resources.getString(R.string.player_sub_track)
+    PlayerSheet.ASPECT -> resources.getString(R.string.player_aspect)
+    PlayerSheet.LOOP -> resources.getString(R.string.player_loop)
+    PlayerSheet.SUBTITLE_DELAY -> resources.getString(R.string.player_sub_delay)
+    PlayerSheet.AUDIO_DELAY -> resources.getString(R.string.player_audio_delay)
 }
 
 private fun sheetOptions(
@@ -832,6 +920,7 @@ private fun sheetOptions(
     currentAspect: String,
     onAspectChange: (String) -> Unit,
     onLoadSubtitle: () -> Unit,
+    onLoopModeChange: (Int) -> Unit,
     onDismiss: () -> Unit,
 ): List<SheetOption> = when (kind) {
     PlayerSheet.SPEED -> SPEED_VALUES.map { value ->
@@ -909,7 +998,7 @@ private fun sheetOptions(
             label = label,
             selected = state.loopMode == mode,
             onClick = {
-                player.setLoopMode(mode)
+                onLoopModeChange(mode)
                 onDismiss()
             },
         )

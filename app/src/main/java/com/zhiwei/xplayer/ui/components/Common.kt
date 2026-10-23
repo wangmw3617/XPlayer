@@ -1,8 +1,10 @@
 package com.zhiwei.xplayer.ui.components
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.res.Resources
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -30,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
@@ -38,11 +41,24 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.zhiwei.xplayer.core.media.Thumbnails
+
+/**
+ * Compose 1.8 does not expose `LocalResources` yet, but reading resources through
+ * `LocalContext` alone does not observe configuration changes.
+ */
+@Composable
+@ReadOnlyComposable
+@SuppressLint("LocalContextResourcesRead")
+fun rememberResources(): Resources {
+    LocalConfiguration.current
+    return LocalContext.current.resources
+}
 
 /** 从任意 Context 往上找宿主 Activity（Compose 里改窗口属性、进 PiP 都要用） */
 fun Context.findActivity(): Activity? {
@@ -250,8 +266,8 @@ fun MediaListRow(
 fun InfoRow(
     icon: ImageVector,
     title: String,
-    subtitle: String? = null,
     modifier: Modifier = Modifier,
+    subtitle: String? = null,
     trailing: @Composable (() -> Unit)? = null,
     onClick: (() -> Unit)? = null,
 ) {

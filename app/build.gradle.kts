@@ -10,6 +10,10 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 // =============================================================================
 //  本地属性
 // =============================================================================
@@ -189,8 +193,8 @@ android {
     }
 
     lint {
-        abortOnError = false
-        checkReleaseBuilds = false
+        abortOnError = true
+        checkReleaseBuilds = true
     }
 }
 

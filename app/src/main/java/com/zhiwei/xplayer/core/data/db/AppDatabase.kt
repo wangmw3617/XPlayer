@@ -98,13 +98,13 @@ interface PlaylistDao {
 /**
  * 数据库。
  *
- * `exportSchema = false`：本项目没有跨版本迁移的历史包袱，1.0.0 是首个版本；
- * 一旦开始发版就应该打开并提交 schema，避免后续改表时无法验证迁移。
+ * 已发布版本必须导出 Schema，并在改表时提供显式 Migration。禁止回退到
+ * destructive migration，否则一次升级就可能清空用户历史、目录和播放列表。
  */
 @Database(
     entities = [HistoryEntity::class, FolderEntity::class, PlaylistEntity::class],
     version = 1,
-    exportSchema = false,
+    exportSchema = true,
 )
 abstract class XPlayerDatabase : RoomDatabase() {
     abstract fun historyDao(): HistoryDao

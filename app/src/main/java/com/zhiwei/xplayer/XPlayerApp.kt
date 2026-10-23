@@ -2,7 +2,12 @@ package com.zhiwei.xplayer
 
 import android.app.Application
 import com.zhiwei.xplayer.core.playback.PlaybackRecorder
+import com.zhiwei.xplayer.core.webdav.WebDavAccountStore
 import dagger.hilt.android.HiltAndroidApp
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
@@ -20,4 +25,18 @@ class XPlayerApp : Application() {
 
     @Inject
     lateinit var playbackRecorder: PlaybackRecorder
+
+    @Inject
+    lateinit var webDavAccountStore: WebDavAccountStore
+
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    override fun onCreate() {
+        super.onCreate()
+        // 旧版本把 WebDAV 密码混在普通设置 JSON 中。启动即迁移，避免用户不打开
+        // WebDAV 页面时明文长期留在原文件里。
+        applicationScope.launch {
+            webDavAccountStore.ensureMigrated()
+        }
+    }
 }

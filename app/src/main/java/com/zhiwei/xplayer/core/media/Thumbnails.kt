@@ -10,10 +10,11 @@ import android.util.LruCache
 import android.util.Size
 import androidx.core.net.toUri
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /**
  * 缩略图加载。
@@ -37,8 +38,21 @@ object Thumbnails {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount / 1024
     }
 
-    /** 同一 key 并发请求时只真正解码一次 */
-    private val locks = ConcurrentHashMap<String, Mutex>()
+    private class LockEntry {
+        val mutex = Mutex()
+        var users = 0
+    }
+
+    /**
+     * 同一 key 并发请求时只真正解码一次。
+     *
+     * 最后一位使用者在 finally 中移除条目，避免长时间浏览媒体库后按 uri 累积无限个 Mutex。
+     * users 计数让「已有协程在等锁」时不会提前换一把新锁，从而避免重复解码。
+     */
+    private val locks = mutableMapOf<String, LockEntry>()
+
+    /** 快速滚动时最多同时抽两张图，避免十几路 MediaMetadataRetriever 抢磁盘。 */
+    private val decodePermits = Semaphore(2)
 
     fun cached(uri: String, sizePx: Int): Bitmap? = cache.get(keyOf(uri, sizePx))
 
@@ -50,17 +64,35 @@ object Thumbnails {
     ): Bitmap? {
         val key = keyOf(uri, sizePx)
         cache.get(key)?.let { return it }
-        val mutex = locks.getOrPut(key) { Mutex() }
-        return mutex.withLock {
-            cache.get(key)?.let { return@withLock it }
-            val bitmap = withContext(Dispatchers.IO) {
-                runCatching {
-                    val parsed = uri.toUri()
-                    if (isVideo) videoThumbnail(context, parsed, sizePx) else audioArtwork(context, parsed)
-                }.getOrNull()
+        val entry = synchronized(locks) {
+            locks.getOrPut(key) { LockEntry() }.also { it.users++ }
+        }
+        return try {
+            entry.mutex.withLock {
+                cache.get(key)?.let { return@withLock it }
+                val bitmap = withContext(Dispatchers.IO) {
+                    decodePermits.withPermit {
+                        runCatching {
+                            val parsed = uri.toUri()
+                            if (isVideo) {
+                                videoThumbnail(context, parsed, sizePx)
+                            } else {
+                                audioArtwork(context, parsed)
+                            }
+                        }.getOrNull()
+                    }
+                }
+                if (bitmap != null) cache.put(key, bitmap)
+                bitmap
             }
-            if (bitmap != null) cache.put(key, bitmap)
-            bitmap
+        } finally {
+            synchronized(locks) {
+                val current = locks[key]
+                if (current === entry) {
+                    entry.users--
+                    if (entry.users == 0) locks.remove(key)
+                }
+            }
         }
     }
 

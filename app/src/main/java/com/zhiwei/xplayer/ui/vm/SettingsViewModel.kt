@@ -6,6 +6,7 @@ import com.zhiwei.xplayer.core.data.AppSettings
 import com.zhiwei.xplayer.core.data.SettingsRepository
 import com.zhiwei.xplayer.core.data.ThemeMode
 import com.zhiwei.xplayer.core.mpv.MpvPlayer
+import com.zhiwei.xplayer.core.webdav.WebDavRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -15,6 +16,7 @@ import javax.inject.Inject
 class SettingsViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val player: MpvPlayer,
+    private val webDavRepository: WebDavRepository,
 ) : ViewModel() {
 
     val settings: StateFlow<AppSettings> = settingsRepository.settings
@@ -46,6 +48,7 @@ class SettingsViewModel @Inject constructor(
     fun resetAll() {
         viewModelScope.launch {
             settingsRepository.reset()
+            webDavRepository.clearAll()
             player.applyRuntimeSettings()
         }
     }

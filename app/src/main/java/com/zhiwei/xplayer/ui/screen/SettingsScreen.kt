@@ -49,6 +49,7 @@ import com.zhiwei.xplayer.BuildConfig
 import com.zhiwei.xplayer.R
 import com.zhiwei.xplayer.core.data.AppSettings
 import com.zhiwei.xplayer.core.data.ThemeMode
+import com.zhiwei.xplayer.ui.components.rememberResources
 import com.zhiwei.xplayer.ui.components.GlassCard
 import com.zhiwei.xplayer.ui.components.InfoRow
 import com.zhiwei.xplayer.ui.components.SectionHeader
@@ -57,6 +58,7 @@ import com.zhiwei.xplayer.ui.vm.SettingsViewModel
 @Composable
 fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     val context = LocalContext.current
+    val resources = rememberResources()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
 
     var textDialog by remember { mutableStateOf<TextDialogKind?>(null) }
@@ -66,9 +68,9 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     val dialog = textDialog
     if (dialog != null) {
         TextInputDialog(
-            title = context.getString(dialog.titleRes),
+            title = resources.getString(dialog.titleRes),
             initial = dialog.initial(settings),
-            hint = dialog.hintRes?.let { context.getString(it) },
+            hint = dialog.hintRes?.let { resources.getString(it) },
             numeric = dialog.numeric,
             onDismiss = { textDialog = null },
             onConfirm = { value ->
@@ -81,19 +83,19 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     if (confirmReset) {
         AlertDialog(
             onDismissRequest = { confirmReset = false },
-            title = { Text(context.getString(R.string.settings_reset)) },
-            text = { Text(context.getString(R.string.settings_reset_confirm)) },
+            title = { Text(resources.getString(R.string.settings_reset)) },
+            text = { Text(resources.getString(R.string.settings_reset_confirm)) },
             confirmButton = {
                 TextButton(
                     onClick = {
                         confirmReset = false
                         viewModel.resetAll()
                     },
-                ) { Text(context.getString(R.string.action_ok)) }
+                ) { Text(resources.getString(R.string.action_ok)) }
             },
             dismissButton = {
                 TextButton(onClick = { confirmReset = false }) {
-                    Text(context.getString(R.string.action_cancel))
+                    Text(resources.getString(R.string.action_cancel))
                 }
             },
         )
@@ -105,7 +107,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         // ---------------------------------------------------------- 外观 ----
-        item { SectionHeader(context.getString(R.string.settings_appearance)) }
+        item { SectionHeader(resources.getString(R.string.settings_appearance)) }
         item {
             GlassCard {
                 Row(
@@ -117,15 +119,15 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                         FilterChip(
                             selected = settings.themeMode == mode,
                             onClick = { viewModel.setThemeMode(mode) },
-                            label = { Text(context.getString(themeLabel(mode))) },
+                            label = { Text(resources.getString(themeLabel(mode))) },
                         )
                     }
                 }
                 Spacer(Modifier.height(4.dp))
                 SwitchRow(
                     icon = Icons.Outlined.DarkMode,
-                    title = context.getString(R.string.settings_dynamic_color),
-                    subtitle = context.getString(R.string.settings_dynamic_color_desc),
+                    title = resources.getString(R.string.settings_dynamic_color),
+                    subtitle = resources.getString(R.string.settings_dynamic_color_desc),
                     checked = settings.dynamicColor,
                     onCheckedChange = viewModel::setDynamicColor,
                 )
@@ -133,40 +135,40 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
         }
 
         // ---------------------------------------------------------- 播放 ----
-        item { SectionHeader(context.getString(R.string.settings_playback)) }
+        item { SectionHeader(resources.getString(R.string.settings_playback)) }
         item {
             GlassCard {
                 SwitchRow(
                     icon = Icons.Outlined.Memory,
-                    title = context.getString(R.string.settings_hwdec),
-                    subtitle = context.getString(R.string.settings_hwdec_desc),
+                    title = resources.getString(R.string.settings_hwdec),
+                    subtitle = resources.getString(R.string.settings_hwdec_desc),
                     checked = settings.hardwareDecoding,
                     onCheckedChange = viewModel::setHardwareDecoding,
                 )
                 SwitchRow(
                     icon = Icons.Outlined.Videocam,
-                    title = context.getString(R.string.settings_gpu_next),
-                    subtitle = context.getString(R.string.settings_gpu_next_desc),
+                    title = resources.getString(R.string.settings_gpu_next),
+                    subtitle = resources.getString(R.string.settings_gpu_next_desc),
                     checked = settings.gpuNext,
                     onCheckedChange = viewModel::setGpuNext,
                 )
                 SwitchRow(
                     icon = Icons.Outlined.MusicNote,
-                    title = context.getString(R.string.settings_background),
-                    subtitle = context.getString(R.string.settings_background_desc),
+                    title = resources.getString(R.string.settings_background),
+                    subtitle = resources.getString(R.string.settings_background_desc),
                     checked = settings.backgroundPlayback,
                     onCheckedChange = viewModel::setBackgroundPlayback,
                 )
                 SwitchRow(
                     icon = Icons.Outlined.Palette,
-                    title = context.getString(R.string.settings_keep_screen_on),
+                    title = resources.getString(R.string.settings_keep_screen_on),
                     checked = settings.keepScreenOn,
                     onCheckedChange = viewModel::setKeepScreenOn,
                 )
                 SwitchRow(
                     icon = Icons.Outlined.Speed,
-                    title = context.getString(R.string.settings_remember_position),
-                    subtitle = context.getString(R.string.settings_remember_position_desc),
+                    title = resources.getString(R.string.settings_remember_position),
+                    subtitle = resources.getString(R.string.settings_remember_position_desc),
                     checked = settings.rememberPosition,
                     onCheckedChange = viewModel::setRememberPosition,
                 )
@@ -174,29 +176,29 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
         }
 
         // ---------------------------------------------------------- 字幕 ----
-        item { SectionHeader(context.getString(R.string.settings_subtitle)) }
+        item { SectionHeader(resources.getString(R.string.settings_subtitle)) }
         item {
             GlassCard {
                 SwitchRow(
                     icon = Icons.Outlined.Subtitles,
-                    title = context.getString(R.string.settings_auto_sub),
-                    subtitle = context.getString(R.string.settings_auto_sub_desc),
+                    title = resources.getString(R.string.settings_auto_sub),
+                    subtitle = resources.getString(R.string.settings_auto_sub_desc),
                     checked = settings.autoLoadSubtitles,
                     onCheckedChange = viewModel::setAutoLoadSubtitles,
                 )
                 InfoRow(
                     icon = Icons.Outlined.MusicNote,
-                    title = context.getString(R.string.settings_alang),
+                    title = resources.getString(R.string.settings_alang),
                     subtitle = settings.defaultAudioLanguage.ifBlank {
-                        context.getString(R.string.settings_language_hint)
+                        resources.getString(R.string.settings_language_hint)
                     },
                     onClick = { textDialog = TextDialogKind.AudioLanguage },
                 )
                 InfoRow(
                     icon = Icons.Outlined.Language,
-                    title = context.getString(R.string.settings_slang),
+                    title = resources.getString(R.string.settings_slang),
                     subtitle = settings.defaultSubtitleLanguage.ifBlank {
-                        context.getString(R.string.settings_language_hint)
+                        resources.getString(R.string.settings_language_hint)
                     },
                     onClick = { textDialog = TextDialogKind.SubtitleLanguage },
                 )
@@ -204,18 +206,18 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
         }
 
         // ---------------------------------------------------------- 手势 ----
-        item { SectionHeader(context.getString(R.string.settings_gesture)) }
+        item { SectionHeader(resources.getString(R.string.settings_gesture)) }
         item {
             GlassCard {
                 InfoRow(
                     icon = Icons.Outlined.TouchApp,
-                    title = context.getString(R.string.settings_seek_step),
-                    subtitle = "${settings.seekStepSeconds}s · ${context.getString(R.string.settings_seek_step_desc)}",
+                    title = resources.getString(R.string.settings_seek_step),
+                    subtitle = "${settings.seekStepSeconds}s · ${resources.getString(R.string.settings_seek_step_desc)}",
                     onClick = { textDialog = TextDialogKind.SeekStep },
                 )
                 InfoRow(
                     icon = Icons.Outlined.Speed,
-                    title = context.getString(R.string.settings_long_press_speed),
+                    title = resources.getString(R.string.settings_long_press_speed),
                     subtitle = "${settings.longPressSpeed}x",
                     onClick = { textDialog = TextDialogKind.LongPressSpeed },
                 )
@@ -223,22 +225,22 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
         }
 
         // ---------------------------------------------------------- 关于 ----
-        item { SectionHeader(context.getString(R.string.settings_about)) }
+        item { SectionHeader(resources.getString(R.string.settings_about)) }
         item {
             GlassCard {
                 InfoRow(
                     icon = Icons.Outlined.Info,
-                    title = context.getString(R.string.settings_version),
+                    title = resources.getString(R.string.settings_version),
                     subtitle = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
                 )
                 InfoRow(
                     icon = Icons.Outlined.Memory,
-                    title = context.getString(R.string.settings_core),
-                    subtitle = context.getString(R.string.settings_core_value, BuildConfig.LIBMPV_VERSION),
+                    title = resources.getString(R.string.settings_core),
+                    subtitle = resources.getString(R.string.settings_core_value, BuildConfig.LIBMPV_VERSION),
                 )
                 InfoRow(
                     icon = Icons.Outlined.Palette,
-                    title = context.getString(R.string.settings_glass),
+                    title = resources.getString(R.string.settings_glass),
                     subtitle = "Kyant0/backdrop ${BuildConfig.LIQUID_GLASS_VERSION}",
                 )
                 Spacer(Modifier.height(8.dp))
@@ -248,7 +250,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                 ) {
                     Icon(Icons.Outlined.RestartAlt, contentDescription = null, modifier = Modifier.size(18.dp))
                     Text(
-                        text = context.getString(R.string.settings_reset),
+                        text = resources.getString(R.string.settings_reset),
                         modifier = Modifier.padding(start = 8.dp),
                     )
                 }
@@ -287,6 +289,7 @@ private fun TextInputDialog(
 ) {
     var value by remember(initial) { mutableStateOf(initial) }
     val context = LocalContext.current
+    val resources = rememberResources()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
@@ -315,11 +318,11 @@ private fun TextInputDialog(
         },
         confirmButton = {
             TextButton(onClick = { onConfirm(value) }) {
-                Text(context.getString(R.string.action_ok))
+                Text(resources.getString(R.string.action_ok))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text(context.getString(R.string.action_cancel)) }
+            TextButton(onClick = onDismiss) { Text(resources.getString(R.string.action_cancel)) }
         },
     )
 }

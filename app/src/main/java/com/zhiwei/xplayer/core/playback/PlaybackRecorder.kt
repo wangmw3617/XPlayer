@@ -7,6 +7,7 @@ import com.zhiwei.xplayer.core.mpv.PlayerState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -41,6 +42,7 @@ class PlaybackRecorder @Inject constructor(
 ) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val commands = Channel<Command>(Channel.UNLIMITED)
 
     /** 用 elapsedRealtime 而不是 currentTimeMillis：后者会被系统时间调整影响 */
     @Volatile
@@ -51,19 +53,36 @@ class PlaybackRecorder @Inject constructor(
 
     init {
         scope.launch {
+            for (command in commands) {
+                runCatching {
+                    when (command) {
+                        is Command.Begin -> libraryRepository.recordPlaybackStart(
+                            uri = command.source.uri,
+                            title = command.source.title,
+                            isNetwork = command.source.isNetwork,
+                            positionMs = command.startMs,
+                        )
+                        is Command.Persist -> persistNow(command.snapshot)
+                    }
+                }
+            }
+        }
+        scope.launch {
             player.state.collect { snapshot ->
                 if (snapshot.source == null || snapshot.idle) return@collect
                 lastSnapshot = snapshot
                 val now = SystemClock.elapsedRealtime()
                 if (now - lastSavedAt >= SAVE_INTERVAL_MS) {
                     lastSavedAt = now
-                    persist(snapshot)
+                    commands.trySend(Command.Persist(snapshot))
                 }
             }
         }
         scope.launch {
             // 一个文件播完：把最终进度落库
-            player.ended.collect { lastSnapshot?.let { persist(it) } }
+            player.ended.collect {
+                lastSnapshot?.let { commands.trySend(Command.Persist(it)) }
+            }
         }
     }
 
@@ -74,30 +93,43 @@ class PlaybackRecorder @Inject constructor(
      * 不依赖调用方的生命周期，所以 ViewModel 被销毁也照样能写完。
      */
     fun flush() {
-        lastSnapshot?.let { persist(it) }
+        lastSnapshot?.let { commands.trySend(Command.Persist(it)) }
         lastSavedAt = SystemClock.elapsedRealtime()
     }
 
-    /** 开始播新文件时调一下，避免上一轮的节流窗口把这次的首次落库挡掉 */
-    fun onPlaybackStarted() {
+    /**
+     * 开始播放新文件。
+     *
+     * 开始记录和后续快照都进入同一个 FIFO 队列，不会出现「开始记录比进度晚到」
+     * 或两次 Room upsert 乱序覆盖的情况。
+     */
+    fun beginPlayback(source: com.zhiwei.xplayer.core.mpv.PlaybackSource, startMs: Long) {
         lastSnapshot = null
         lastSavedAt = 0L
+        commands.trySend(Command.Begin(source, startMs))
     }
 
-    private fun persist(snapshot: PlayerState) {
+    private suspend fun persistNow(snapshot: PlayerState) {
         val source = snapshot.source ?: return
         // 时长还没解出来时写进去的是 0，会把「继续观看」的进度条抹掉，不如不写
         if (snapshot.durationMs <= 0L) return
         val title = source.title.ifBlank { snapshot.mediaTitle }
-        scope.launch {
-            libraryRepository.recordPlayback(
-                uri = source.uri,
-                title = title,
-                isNetwork = source.isNetwork,
-                positionMs = snapshot.positionMs,
-                durationMs = snapshot.durationMs,
-            )
-        }
+        libraryRepository.recordPlayback(
+            uri = source.uri,
+            title = title,
+            isNetwork = source.isNetwork,
+            positionMs = snapshot.positionMs,
+            durationMs = snapshot.durationMs,
+        )
+    }
+
+    private sealed interface Command {
+        data class Begin(
+            val source: com.zhiwei.xplayer.core.mpv.PlaybackSource,
+            val startMs: Long,
+        ) : Command
+
+        data class Persist(val snapshot: PlayerState) : Command
     }
 
     companion object {

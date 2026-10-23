@@ -215,18 +215,31 @@ fun AppRoot() {
                         HomeScreen(
                             onOpen = { route -> navController.navigate(route) },
                             onPlay = { source -> playFrom(navController, source) },
+                            onPlayQueue = { queue, index ->
+                                queue.getOrNull(index)?.let { playFrom(navController, it, queue, index) }
+                            },
                         )
                     }
                     composable<LibraryRoute> {
                         LibraryScreen(
                             onPlay = { source -> playFrom(navController, source) },
+                            onPlayQueue = { queue, index ->
+                                queue.getOrNull(index)?.let { playFrom(navController, it, queue, index) }
+                            },
                             onOpen = { route -> navController.navigate(route) },
                         )
                     }
                     composable<FolderRoute> { FolderScreen(onPlay = { source -> playFrom(navController, source) }) }
                     composable<SettingsRoute> { SettingsScreen() }
                     composable<StreamRoute> { StreamScreen(onPlay = { source -> playFrom(navController, source) }) }
-                    composable<WebDavRoute> { WebDavBrowserScreen(onPlay = { source -> playFrom(navController, source) }) }
+                    composable<WebDavRoute> {
+                        WebDavBrowserScreen(
+                            onPlay = { source -> playFrom(navController, source) },
+                            onPlayQueue = { queue, index ->
+                                queue.getOrNull(index)?.let { playFrom(navController, it, queue, index) }
+                            },
+                        )
+                    }
                     composable<HistoryRoute> {
                         HistoryScreen(onPlay = { source -> playFrom(navController, source) })
                     }
@@ -252,9 +265,11 @@ fun AppRoot() {
 /** 统一的「播放并跳转」入口：所有页面点条目都走这里，避免各页各写一遍 */
 private fun playFrom(
     navController: NavHostController,
-    source: com.zhiwei.xplayer.core.mpv.PlaybackSource,
+    source: PlaybackSource,
+    queue: List<PlaybackSource> = listOf(source),
+    index: Int = 0,
 ) {
-    PendingPlayback.request(source)
+    PendingPlayback.request(source = source, queue = queue, index = index)
     // launchSingleTop：播放页已经在栈顶时就复用它，否则连点几个条目会堆一串播放页
     navController.navigate(PlayerRoute) { launchSingleTop = true }
 }

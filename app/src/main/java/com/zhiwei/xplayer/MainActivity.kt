@@ -11,6 +11,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import com.zhiwei.xplayer.core.data.AppSettings
 import com.zhiwei.xplayer.core.data.SettingsRepository
+import com.zhiwei.xplayer.core.media.MediaRepository
 import com.zhiwei.xplayer.ui.AppRoot
 import com.zhiwei.xplayer.ui.SharedInput
 import com.zhiwei.xplayer.ui.theme.XPlayerTheme
@@ -24,6 +25,9 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var settingsRepository: SettingsRepository
+
+    @Inject
+    lateinit var mediaRepository: MediaRepository
 
     /** 主题相关设置要在 setContent 之前拿到，用一个轻量 StateFlow 桥接 */
     private val settingsState = MutableStateFlow(AppSettings())
@@ -55,6 +59,15 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 用户可能刚在系统相册里增删文件，或从权限设置返回；回到前台时刷新一次媒体目录。
+        // MediaRepository 内部有互斥锁，与首页/媒体库的首次加载不会重复扫描。
+        lifecycleScope.launch {
+            mediaRepository.refresh(force = true)
+        }
     }
 
     /**

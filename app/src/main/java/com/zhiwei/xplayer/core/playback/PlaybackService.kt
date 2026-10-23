@@ -1,5 +1,6 @@
 package com.zhiwei.xplayer.core.playback
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,6 +8,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
@@ -25,8 +27,10 @@ import com.zhiwei.xplayer.core.util.Formatters
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -49,6 +53,9 @@ class PlaybackService : Service() {
     @Inject
     lateinit var player: MpvPlayer
 
+    @Inject
+    lateinit var queueController: PlaybackQueueController
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private var session: MediaSessionCompat? = null
@@ -58,6 +65,7 @@ class PlaybackService : Service() {
 
     /** 是否真的加载过媒体。避免服务刚起来、还没 loadfile 时就被「空闲」判定自杀 */
     private var sawMedia = false
+    private var idleStopJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -68,8 +76,13 @@ class PlaybackService : Service() {
                     override fun onPlay() = player.setPaused(false)
                     override fun onPause() = player.setPaused(true)
                     override fun onStop() = stopPlayback()
-                    override fun onSkipToNext() = player.next()
-                    override fun onSkipToPrevious() = player.previous()
+                    override fun onSkipToNext() {
+                        queueController.next()
+                    }
+
+                    override fun onSkipToPrevious() {
+                        queueController.previous()
+                    }
                     override fun onSeekTo(pos: Long) = player.seekTo(pos)
                 },
             )
@@ -98,10 +111,15 @@ class PlaybackService : Service() {
             player.state.collect { state ->
                 if (!state.idle && state.source != null) sawMedia = true
                 if (sawMedia && state.idle) {
-                    // 播放已结束且没有新内容：没必要继续占着前台服务
-                    stopPlayback()
+                    // 给应用级队列一个短窗口启动下一项，避免列表切歌时服务自杀。
+                    idleStopJob?.cancel()
+                    idleStopJob = scope.launch {
+                        delay(QUEUE_TRANSITION_GRACE_MS)
+                        if (player.state.value.idle) stopPlayback()
+                    }
                     return@collect
                 }
+                idleStopJob?.cancel()
 
                 val key = SessionKey.of(state)
                 val second = state.positionMs / 1000L
@@ -122,6 +140,11 @@ class PlaybackService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // 系统重建服务时不会恢复播放源。没有媒体就直接退出，不留下空闲前台服务。
+        if (player.state.value.source == null) {
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         // 无论因为什么被拉起，都要先满足「5 秒内进入前台」的硬性要求
         if (!foreground) {
             startForegroundCompat(buildNotification(player.state.value))
@@ -129,12 +152,12 @@ class PlaybackService : Service() {
         }
         when (intent?.action) {
             ACTION_TOGGLE -> player.togglePause()
-            ACTION_PREVIOUS -> player.previous()
-            ACTION_NEXT -> player.next()
+            ACTION_PREVIOUS -> queueController.previous()
+            ACTION_NEXT -> queueController.next()
             ACTION_STOP -> stopPlayback()
             else -> Unit
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {
@@ -245,6 +268,15 @@ class PlaybackService : Service() {
 
     private fun pushNotification(state: PlayerState) {
         if (!foreground) return
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
         runCatching {
             NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification(state))
         }
@@ -295,13 +327,8 @@ class PlaybackService : Service() {
     }
 
     private fun stopPlayback() {
-        player.stop()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
-        }
+        queueController.stop()
+        stopForeground(STOP_FOREGROUND_REMOVE)
         foreground = false
         stopSelf()
     }
@@ -324,6 +351,7 @@ class PlaybackService : Service() {
          * 而 60Hz 推送会让主线程被 binder 调用淹掉（详见 onCreate 里的注释）。
          */
         private const val POSITION_PUSH_INTERVAL_MS = 1_000L
+        private const val QUEUE_TRANSITION_GRACE_MS = 900L
 
         const val ACTION_TOGGLE = "com.zhiwei.xplayer.action.TOGGLE"
         const val ACTION_PREVIOUS = "com.zhiwei.xplayer.action.PREVIOUS"

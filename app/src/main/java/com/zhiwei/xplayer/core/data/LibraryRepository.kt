@@ -33,6 +33,27 @@ class LibraryRepository @Inject constructor(
 
     suspend fun findHistory(uri: String): HistoryEntity? = historyDao.find(uri)
 
+    /** 开始播放时更新条目，但保留上一次已知的总时长，避免短暂清零进度条。 */
+    suspend fun recordPlaybackStart(
+        uri: String,
+        title: String,
+        isNetwork: Boolean,
+        positionMs: Long,
+        nowMs: Long = System.currentTimeMillis(),
+    ) {
+        val existing = historyDao.find(uri)
+        historyDao.upsert(
+            HistoryEntity(
+                uri = uri,
+                title = title,
+                isNetwork = isNetwork,
+                positionMs = positionMs.coerceAtLeast(0L),
+                durationMs = existing?.durationMs ?: 0L,
+                updatedAt = nowMs,
+            ),
+        )
+    }
+
     /** 记录/更新一条播放进度。position 与 duration 都为 0 时只更新时间戳。 */
     suspend fun recordPlayback(
         uri: String,

@@ -22,11 +22,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material.icons.outlined.InsertDriveFile
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -55,6 +55,7 @@ import com.zhiwei.xplayer.core.media.SafBrowser
 import com.zhiwei.xplayer.core.media.SafNode
 import com.zhiwei.xplayer.core.mpv.PlaybackSource
 import com.zhiwei.xplayer.core.util.Formatters
+import com.zhiwei.xplayer.ui.components.rememberResources
 import com.zhiwei.xplayer.ui.components.EmptyState
 import com.zhiwei.xplayer.ui.vm.LibraryViewModel
 
@@ -71,6 +72,7 @@ fun FolderScreen(
     viewModel: LibraryViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
+    val resources = rememberResources()
     val folders by viewModel.folders.collectAsStateWithLifecycle()
 
     var selectedTree by rememberSaveable { mutableStateOf<String?>(null) }
@@ -121,9 +123,9 @@ fun FolderScreen(
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             EmptyState(
                 icon = Icons.Outlined.FolderOpen,
-                title = context.getString(R.string.folder_empty),
-                description = context.getString(R.string.folder_add_desc),
-                actionLabel = context.getString(R.string.folder_add),
+                title = resources.getString(R.string.folder_empty),
+                description = resources.getString(R.string.folder_add_desc),
+                actionLabel = resources.getString(R.string.folder_add),
                 onAction = { treePicker.launch(null) },
             )
         }
@@ -154,7 +156,7 @@ fun FolderScreen(
             item {
                 AssistChip(
                     onClick = { treePicker.launch(null) },
-                    label = { Text(context.getString(R.string.folder_add)) },
+                    label = { Text(resources.getString(R.string.folder_add)) },
                     leadingIcon = {
                         Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     },
@@ -181,7 +183,7 @@ fun FolderScreen(
                 },
                 enabled = path.isNotEmpty(),
             ) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = context.getString(R.string.folder_up))
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = resources.getString(R.string.folder_up))
             }
             Text(
                 text = buildString {
@@ -197,7 +199,7 @@ fun FolderScreen(
             IconButton(
                 onClick = { selectedTree?.let { viewModel.removeFolder(it) } },
             ) {
-                Icon(Icons.Outlined.Delete, contentDescription = context.getString(R.string.folder_remove))
+                Icon(Icons.Outlined.Delete, contentDescription = resources.getString(R.string.folder_remove))
             }
         }
 
@@ -209,7 +211,7 @@ fun FolderScreen(
             nodes.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 EmptyState(
                     icon = Icons.Outlined.FolderOpen,
-                    title = context.getString(R.string.folder_no_media),
+                    title = resources.getString(R.string.folder_no_media),
                 )
             }
 
@@ -251,7 +253,7 @@ private fun SafNodeRow(node: SafNode, onClick: () -> Unit) {
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector = if (node.isDirectory) Icons.Outlined.Folder else Icons.Outlined.InsertDriveFile,
+                imageVector = if (node.isDirectory) Icons.Outlined.Folder else Icons.AutoMirrored.Outlined.InsertDriveFile,
                 contentDescription = null,
                 tint = if (node.isDirectory) {
                     MaterialTheme.colorScheme.primary

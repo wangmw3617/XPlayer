@@ -27,8 +27,6 @@ object AppModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): XPlayerDatabase =
         Room.databaseBuilder(context, XPlayerDatabase::class.java, "xplayer.db")
-            // 1.0.0 是首个版本，还没有需要保留的历史数据；后续加表时改成真正的 Migration
-            .fallbackToDestructiveMigration(dropAllTables = true)
             .build()
 
     @Provides

@@ -5,7 +5,8 @@
 
 - **播放内核**：libmpv 1.0.0（`dev.jdtech.mpv:libmpv`），MediaCodec 硬解，`gpu-next` / `gpu` 双渲染后端
 - **界面**：100% Compose，Material You 动态取色，液态玻璃悬浮底栏与播放控制层
-- **架构**：单 Activity + Navigation Compose 类型安全路由；Hilt 依赖注入；Room 存历史与授权目录；DataStore 存设置
+- **在线媒体**：WebDAV 目录浏览、Basic 认证、在线播放与当前目录“播放全部”，无需先下载
+- **架构**：单 Activity + Navigation Compose 类型安全路由；Hilt 依赖注入；Room 存历史与授权目录；DataStore 存设置与加密凭据
 - **最低版本**：Android 8.0（API 26，由 libmpv AAR 的 `minSdkVersion` 决定）
 - **目标版本**：Android 16（API 36）
 
@@ -29,6 +30,18 @@
 | 截图 | 保存到应用专属外部目录（`Android/data/com.zhiwei.xplayer/files/Pictures`），不需要存储权限 |
 | 画中画 | Android 8.0+，按视频宽高设置 PiP 比例 |
 | 后台播放 | mediaPlayback 前台服务 + MediaSessionCompat，锁屏与耳机按键可控 |
+| 播放队列 | 上一首 / 下一首、列表循环、自然播完自动切下一项；用户主动停止不会误切歌 |
+
+### 媒体库与在线媒体
+
+| 能力 | 说明 |
+| --- | --- |
+| WebDAV | `PROPFIND` 浏览目录，选中当前目录全部媒体即可顺序播放；支持 HTTP / HTTPS |
+| 凭据安全 | WebDAV 密码使用 Android Keystore 的 AES-GCM 密钥加密，存于独立 DataStore，不进入云备份或设备迁移 |
+| 局域网服务器 | 允许明文 HTTP，便于连接 NAS 和内网服务；HTTP 只保护连接可达性，不提供传输加密 |
+| 媒体目录 | 应用级共享缓存 + 单互斥扫描，视频与音频并行查询；返回前台时自动刷新 |
+| 缩略图 | 并发抽帧限制为 2，LRU 缓存并自动清理等待计数，滚动大目录时避免任务堆积 |
+| 自适应布局 | 媒体网格按可用宽度调整列数，并提供加载、错误、完整授权与部分授权状态 |
 
 ### 手势
 
@@ -82,7 +95,7 @@ lint（静态检查，秒级）
   └── build（打包 APK）  ─┴──> release（仅 tag 触发，创建 GitHub Release）
 ```
 
-- push 到 `main`：跑 lint / test / build，产出 artifact
+- push 到 `main`：跑静态检查 / Android Lint + 单元测试 / build，产出 artifact
 - push tag `v1.0.0`：额外恢复签名密钥、校验签名、把 APK 附到 Release
 - 纯文档改动不会触发（`paths-ignore`）
 
@@ -143,7 +156,13 @@ app/src/main/java/com/zhiwei/xplayer/
 │   │   ├── SettingsRepository.kt   DataStore + 同步快照
 │   │   ├── LibraryRepository.kt    历史 / 授权目录 / 播放列表
 │   │   └── db/AppDatabase.kt       Room 实体、DAO、数据库
-│   ├── playback/PlaybackService.kt 前台服务 + MediaSession + 通知
+│   ├── playback/
+│   │   ├── PlaybackService.kt      前台服务 + MediaSession + 通知
+│   │   └── PlaybackQueueController.kt 应用级队列、上一首 / 下一首、自动续播
+│   ├── webdav/
+│   │   ├── WebDavClient.kt         PROPFIND、XML 解析、在线播放 URL 与认证头
+│   │   ├── WebDavAccountStore.kt   Keystore 加密账号存储与旧数据迁移
+│   │   └── WebDavRepository.kt     账号仓库
 │   └── util/Formatters.kt          纯函数格式化（有单元测试）
 └── ui/
     ├── AppRoot.kt                  液态玻璃悬浮底栏 + NavHost
@@ -151,9 +170,9 @@ app/src/main/java/com/zhiwei/xplayer/
     ├── theme/LiquidGlass.kt        backdrop 库的封装：采样层 / 玻璃层 / 兜底
     ├── theme/Theme.kt              Material 3 主题与动态取色
     ├── components/                 通用组件、选择器
-    ├── screen/                     首页 / 媒体库 / 文件夹 / 设置 / 串流 / 历史 / 日志
+    ├── screen/                     首页 / 媒体库 / 文件夹 / WebDAV / 设置 / 串流 / 历史 / 日志
     ├── player/                     播放页、SurfaceView、控制层、选项面板
-    └── vm/                         三个 ViewModel
+    └── vm/                         媒体库 / 播放器 / 设置 / WebDAV 四个 ViewModel
 ```
 
 ### 3.1 液态玻璃的三个概念
@@ -215,9 +234,9 @@ MPVLib.create(ctx) → 设选项 → MPVLib.init() → 设硬编码选项 → �
 - **不使用 Coil**。本项目只需要「给一个 `content://` 取一张位图」这一种能力，
   而 Coil 3.x 的 `ImageLoader` / Decoder 工厂 API 改动频繁，为一张缩略图承担那套
   版本风险不划算。`Thumbnails` 用系统 API + LRU 直接实现。
-- **Liquid Glass 固定在 `backdrop 1.0.2`**。2.x 要求 `minCompileSdk=37`；
-  1.0.3–1.0.6 要求 Kotlin ≥2.3，会把 Hilt 与 AGP 一起顶上去形成连锁升版。
-  1.0.2 是唯一「Kotlin 2.2.21 + 不带 shapes」的版本。
+- **Liquid Glass 固定在 `backdrop 1.0.2`**。项目 Kotlin 已升级到 2.3.21，
+  1.0.3–1.0.6 理论上可读；但升级仍需重新验证玻璃折射、指示器和无障碍层，
+  因此暂不与播放器功能改造混在一起。2.x 还要求 `minCompileSdk=37`。
 - **R8 开启**。libmpv 的 AAR 自带 `-keep class dev.jdtech.mpv.MPVLib { *; }`，
   本项目再补了整个包与 native 方法名，避免 JNI 反查失败。
 

@@ -1,5 +1,7 @@
 package com.zhiwei.xplayer.core.webdav
 
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+
 /**
  * 一个 WebDAV 服务端配置。
  *
@@ -30,8 +32,22 @@ data class DavAccount(
      * 否则「继续观看」里的 WebDAV 条目会一律 401。
      */
     fun owns(mediaUrl: String): Boolean {
-        val base = url.trimEnd('/')
-        return base.isNotEmpty() && mediaUrl.startsWith(base)
+        val base = url.trim().toHttpUrlOrNull() ?: return false
+        val target = mediaUrl.trim().toHttpUrlOrNull() ?: return false
+        if (
+            base.scheme != target.scheme ||
+            base.host != target.host ||
+            base.port != target.port
+        ) {
+            return false
+        }
+
+        val baseSegments = base.pathSegments.dropLastWhile { it.isEmpty() }
+        val targetSegments = target.pathSegments
+        if (baseSegments.size > targetSegments.size) return false
+        return baseSegments.indices.all { index ->
+            baseSegments[index] == targetSegments[index]
+        }
     }
 }
 

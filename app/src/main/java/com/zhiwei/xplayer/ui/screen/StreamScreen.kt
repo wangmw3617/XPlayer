@@ -41,6 +41,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zhiwei.xplayer.R
 import com.zhiwei.xplayer.core.mpv.PlaybackSource
 import com.zhiwei.xplayer.core.util.Formatters
+import com.zhiwei.xplayer.ui.components.rememberResources
 import com.zhiwei.xplayer.ui.components.EmptyState
 import com.zhiwei.xplayer.ui.components.InfoRow
 import com.zhiwei.xplayer.ui.vm.LibraryViewModel
@@ -52,6 +53,7 @@ fun StreamScreen(
     viewModel: LibraryViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
+    val resources = rememberResources()
     var url by rememberSaveable { mutableStateOf("") }
     var error by remember { mutableStateOf(false) }
 
@@ -61,7 +63,7 @@ fun StreamScreen(
     // 显式标注类型再传进去：`if (x) { { ... } } else null` 这种写法里
     // lambda 的可组合性要靠期望类型推断，写成局部变量最不容易踩坑
     val supporting: (@Composable () -> Unit)? = if (error) {
-        { Text(context.getString(R.string.stream_invalid)) }
+        { Text(resources.getString(R.string.stream_invalid)) }
     } else {
         null
     }
@@ -77,8 +79,8 @@ fun StreamScreen(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 isError = error,
-                label = { Text(context.getString(R.string.stream_url)) },
-                placeholder = { Text(context.getString(R.string.stream_url_hint)) },
+                label = { Text(resources.getString(R.string.stream_url)) },
+                placeholder = { Text(resources.getString(R.string.stream_url_hint)) },
                 supportingText = supporting,
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Uri,
@@ -106,7 +108,7 @@ fun StreamScreen(
             ) {
                 Icon(Icons.Filled.PlayArrow, contentDescription = null)
                 Text(
-                    text = context.getString(R.string.stream_play),
+                    text = resources.getString(R.string.stream_play),
                     modifier = Modifier.padding(start = 8.dp),
                 )
             }
@@ -117,13 +119,13 @@ fun StreamScreen(
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 EmptyState(
                     icon = Icons.Outlined.Podcasts,
-                    title = context.getString(R.string.stream_empty),
-                    description = context.getString(R.string.home_stream_desc),
+                    title = resources.getString(R.string.stream_empty),
+                    description = resources.getString(R.string.home_stream_desc),
                 )
             }
         } else {
             Text(
-                text = context.getString(R.string.stream_recent),
+                text = resources.getString(R.string.stream_recent),
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
@@ -160,7 +162,7 @@ fun StreamScreen(
                                 IconButton(onClick = { viewModel.removeHistory(item.uri) }) {
                                     Icon(
                                         imageVector = Icons.Outlined.Delete,
-                                        contentDescription = context.getString(R.string.history_remove),
+                                        contentDescription = resources.getString(R.string.history_remove),
                                     )
                                 }
                             }

@@ -1,5 +1,6 @@
 package com.zhiwei.xplayer.ui.player
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -19,6 +20,7 @@ import com.zhiwei.xplayer.core.mpv.MpvPlayer
  * - `surfaceDestroyed` → 先 `vo=null` 再 `detachSurface`，保证 mpv 不再持有这张
  *   surface 之后系统才回收它，否则会出现「用已释放的 surface 渲染」的崩溃。
  */
+@SuppressLint("ViewConstructor")
 class MpvSurfaceView(
     context: Context,
     private val player: MpvPlayer,

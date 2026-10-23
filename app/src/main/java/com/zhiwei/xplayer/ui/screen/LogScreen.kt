@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.zhiwei.xplayer.R
+import com.zhiwei.xplayer.ui.components.rememberResources
 import com.zhiwei.xplayer.ui.components.EmptyState
 import com.zhiwei.xplayer.ui.theme.MonospaceStyle
 import com.zhiwei.xplayer.ui.vm.PlayerViewModel
@@ -45,6 +46,7 @@ import com.zhiwei.xplayer.ui.vm.PlayerViewModel
 @Composable
 fun LogScreen(viewModel: PlayerViewModel = hiltViewModel()) {
     val context = LocalContext.current
+    val resources = rememberResources()
     val lines = remember { mutableStateListOf<String>() }
     val listState = rememberLazyListState()
 
@@ -78,7 +80,7 @@ fun LogScreen(viewModel: PlayerViewModel = hiltViewModel()) {
                 modifier = Modifier.weight(1f),
             )
             IconButton(onClick = { lines.clear() }) {
-                Icon(Icons.Outlined.Delete, contentDescription = context.getString(R.string.log_clear))
+                Icon(Icons.Outlined.Delete, contentDescription = resources.getString(R.string.log_clear))
             }
             IconButton(
                 onClick = {
@@ -88,12 +90,12 @@ fun LogScreen(viewModel: PlayerViewModel = hiltViewModel()) {
                     )
                     Toast.makeText(
                         context,
-                        context.getString(R.string.log_copied),
+                        resources.getString(R.string.log_copied),
                         Toast.LENGTH_SHORT,
                     ).show()
                 },
             ) {
-                Icon(Icons.Outlined.ContentCopy, contentDescription = context.getString(R.string.log_copy))
+                Icon(Icons.Outlined.ContentCopy, contentDescription = resources.getString(R.string.log_copy))
             }
         }
 
@@ -101,7 +103,7 @@ fun LogScreen(viewModel: PlayerViewModel = hiltViewModel()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 EmptyState(
                     icon = Icons.Outlined.Terminal,
-                    title = context.getString(R.string.log_empty),
+                    title = resources.getString(R.string.log_empty),
                 )
             }
         } else {
